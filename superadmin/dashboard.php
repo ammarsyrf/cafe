@@ -32,7 +32,7 @@ $avg_purchase = ($total_transactions > 0) ? $today_revenue / $total_transactions
 $unprocessed_orders = 0;
 $sql_unprocessed = "SELECT COUNT(id) AS unprocessed_count FROM orders WHERE status = 'pending' OR status = 'processing'";
 $result_unprocessed = $conn->query($sql_unprocessed);
-if($row_unprocessed = $result_unprocessed->fetch_assoc()) {
+if ($row_unprocessed = $result_unprocessed->fetch_assoc()) {
     $unprocessed_orders = $row_unprocessed['unprocessed_count'] ?? 0;
 }
 
@@ -74,7 +74,7 @@ $sql_sales_chart = "SELECT DATE(transaction_date) as sales_date, SUM(total_paid)
                     WHERE transaction_date >= CURDATE() - INTERVAL 6 DAY 
                     GROUP BY DATE(transaction_date)";
 $result_sales_chart = $conn->query($sql_sales_chart);
-while($row = $result_sales_chart->fetch_assoc()) {
+while ($row = $result_sales_chart->fetch_assoc()) {
     $chart_data[$row['sales_date']] = $row['daily_total'];
 }
 
@@ -144,10 +144,10 @@ $chart_data_json = json_encode(array_values($chart_data));
                 <ul class="space-y-3">
                     <?php if (!empty($best_sellers)): ?>
                         <?php foreach ($best_sellers as $item): ?>
-                        <li class="flex justify-between items-center text-sm">
-                            <span><?= htmlspecialchars($item['name']) ?></span>
-                            <span class="font-semibold text-gray-600"><?= $item['total_quantity'] ?> Terjual</span>
-                        </li>
+                            <li class="flex justify-between items-center text-sm">
+                                <span><?= htmlspecialchars($item['name']) ?></span>
+                                <span class="font-semibold text-gray-600"><?= $item['total_quantity'] ?> Terjual</span>
+                            </li>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <li class="text-sm text-gray-500">Tidak ada data penjualan.</li>
@@ -157,12 +157,12 @@ $chart_data_json = json_encode(array_values($chart_data));
             <div class="bg-white p-6 rounded-xl shadow">
                 <h3 class="text-lg font-semibold text-gray-700 mb-4">Stok Segera Habis</h3>
                 <ul class="space-y-3">
-                     <?php if (!empty($low_stock_menu)): ?>
+                    <?php if (!empty($low_stock_menu)): ?>
                         <?php foreach ($low_stock_menu as $item): ?>
-                        <li class="flex justify-between items-center text-sm">
-                            <span class="text-red-600"><?= htmlspecialchars($item['name']) ?></span>
-                            <span class="font-semibold text-red-600">Sisa <?= $item['stock'] ?></span>
-                        </li>
+                            <li class="flex justify-between items-center text-sm">
+                                <span class="text-red-600"><?= htmlspecialchars($item['name']) ?></span>
+                                <span class="font-semibold text-red-600">Sisa <?= $item['stock'] ?></span>
+                            </li>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <li class="text-sm text-gray-500">Semua stok aman.</li>
@@ -174,39 +174,41 @@ $chart_data_json = json_encode(array_values($chart_data));
 </div>
 
 <script>
-// Logika untuk Grafik Penjualan
-const ctx = document.getElementById('salesChart').getContext('2d');
-const salesChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-        labels: <?= $chart_labels_json ?>,
-        datasets: [{
-            label: 'Penjualan (Rp)',
-            data: <?= $chart_data_json ?>,
-            backgroundColor: 'rgba(89, 88, 161, 0.2)',
-            borderColor: '#5958A1',
-            borderWidth: 3,
-            tension: 0.4,
-            fill: true
-        }]
-    },
-    options: {
-        responsive: true,
-        scales: {
-            y: {
-                beginAtZero: true,
-                ticks: {
-                    callback: function(value) {
-                        return 'Rp ' + new Intl.NumberFormat('id-ID').format(value);
+    // Logika untuk Grafik Penjualan
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    const salesChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: <?= $chart_labels_json ?>,
+            datasets: [{
+                label: 'Penjualan (Rp)',
+                data: <?= $chart_data_json ?>,
+                backgroundColor: 'rgba(89, 88, 161, 0.2)',
+                borderColor: '#5958A1',
+                borderWidth: 3,
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return 'Rp ' + new Intl.NumberFormat('id-ID').format(value);
+                        }
                     }
                 }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
             }
-        },
-        plugins: {
-            legend: { display: false }
         }
-    }
-});
+    });
 </script>
 
 <?php
@@ -214,4 +216,3 @@ const salesChart = new Chart(ctx, {
 require_once 'includes/footer.php';
 $conn->close(); // Tutup koneksi database
 ?>
-
