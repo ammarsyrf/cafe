@@ -1,7 +1,6 @@
 <?php
 // File: index.php
 // Halaman untuk pelanggan (dapat diakses melalui QR code di meja)
-//test
 
 require_once 'db_connect.php';
 
@@ -10,87 +9,122 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
-// Mendapatkan nomor meja dari parameter URL
-$table_id = isset($_GET['table']) ? (int)$_GET['table'] : 1;
-
-// Mengambil semua menu
-$menu_items = [];
-$sql = "SELECT * FROM menu WHERE is_available = TRUE ORDER BY category, name";
-$result = $conn->query($sql);
-while ($row = $result->fetch_assoc()) {
-    $menu_items[] = $row;
-}
-
-// Mengambil menu berdasarkan kategori
-$categories = [
-    'makanan' => [],
-    'minuman' => [],
-    'snack' => [],
-    'other' => []
-];
-foreach ($menu_items as $item) {
-    if (isset($categories[$item['category']])) {
-        $categories[$item['category']][] = $item;
-    }
-}
-
-// Inisialisasi keranjang
+// Inisialisasi keranjang jika belum ada
 if (!isset($_SESSION['cart'])) {
     $_SESSION['cart'] = [];
 }
 
+// Handle GET request untuk data keranjang (AJAX)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['is_ajax_get_cart'])) {
+    header('Content-Type: application/json');
+
+    $cart = $_SESSION['cart'] ?? [];
+    $subtotal = array_sum(array_map(function ($item) {
+        return $item['price'] * $item['quantity'];
+    }, $cart));
+    $ppn = $subtotal * 0.11; // PPN 11%
+    $total = $subtotal + $ppn;
+    $cart_count = array_sum(array_column($cart, 'quantity'));
+
+    echo json_encode([
+        'cart_items' => array_values($cart),
+        'cart_count' => $cart_count,
+        'subtotal' => $subtotal,
+        'ppn' => $ppn,
+        'total' => $total,
+    ]);
+    exit();
+}
+
+
 // Handle Aksi Keranjang via POST (untuk AJAX)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
     header('Content-Type: application/json');
-    $response = ['success' => false, 'message' => '', 'cart_count' => 0, 'cart_items' => [], 'subtotal' => 0, 'ppn' => 0, 'total' => 0];
+    $response = ['success' => false, 'message' => 'Aksi tidak valid.'];
 
-    if (isset($_POST['action']) && $_POST['action'] === 'add_to_cart') {
-        $menu_id = (int)$_POST['menu_id'];
-        $quantity = 1;
+    $action = $_POST['action'] ?? '';
+    $menu_id = isset($_POST['menu_id']) ? (int)$_POST['menu_id'] : 0;
 
-        $sql = "SELECT * FROM menu WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("i", $menu_id);
-        $stmt->execute();
-        $item = $stmt->get_result()->fetch_assoc();
+    switch ($action) {
+        case 'add_to_cart':
+            $sql = "SELECT * FROM menu WHERE id = ? AND is_available = TRUE";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("i", $menu_id);
+            $stmt->execute();
+            $item = $stmt->get_result()->fetch_assoc();
 
-        if ($item && $item['stock'] > 0) {
-            if (isset($_SESSION['cart'][$menu_id])) {
-                $_SESSION['cart'][$menu_id]['quantity']++;
+            if ($item) {
+                $current_stock = $item['stock'];
+                $cart_quantity = isset($_SESSION['cart'][$menu_id]['quantity']) ? $_SESSION['cart'][$menu_id]['quantity'] : 0;
+
+                if ($current_stock > $cart_quantity) {
+                    if (isset($_SESSION['cart'][$menu_id])) {
+                        $_SESSION['cart'][$menu_id]['quantity']++;
+                    } else {
+                        $_SESSION['cart'][$menu_id] = [
+                            'id' => $item['id'],
+                            'name' => $item['name'],
+                            'price' => $item['price'],
+                            'quantity' => 1,
+                            'image' => $item['image_url']
+                        ];
+                    }
+                    $response['success'] = true;
+                    $response['message'] = "{$item['name']} ditambahkan ke keranjang!";
+                } else {
+                    $response['message'] = "Maaf, stok {$item['name']} tidak mencukupi.";
+                }
             } else {
-                $_SESSION['cart'][$menu_id] = [
-                    'id' => $item['id'],
-                    'name' => $item['name'],
-                    'price' => $item['price'],
-                    'quantity' => $quantity,
-                    'image' => $item['image_url']
-                ];
+                $response['message'] = "Menu tidak ditemukan atau tidak tersedia.";
             }
-            $response['success'] = true;
-            $response['message'] = "{$item['name']} berhasil ditambahkan ke keranjang!";
-        } else {
-            $response['message'] = "Maaf, stok menu habis.";
-        }
-    } elseif (isset($_POST['action']) && $_POST['action'] === 'remove_from_cart') {
-        $menu_id = (int)$_POST['menu_id'];
-        if (isset($_SESSION['cart'][$menu_id])) {
-            $item_name = $_SESSION['cart'][$menu_id]['name'];
-            unset($_SESSION['cart'][$menu_id]);
-            $response['success'] = true;
-            $response['message'] = "{$item_name} berhasil dihapus dari keranjang.";
-        } else {
-            $response['message'] = "Item tidak ditemukan di keranjang.";
-        }
+            break;
+
+        case 'update_quantity':
+            $quantity = isset($_POST['quantity']) ? (int)$_POST['quantity'] : 0;
+            if (isset($_SESSION['cart'][$menu_id])) {
+                if ($quantity > 0) {
+                    // Cek stok sebelum update
+                    $sql = "SELECT stock FROM menu WHERE id = ?";
+                    $stmt = $conn->prepare($sql);
+                    $stmt->bind_param("i", $menu_id);
+                    $stmt->execute();
+                    $menu_item = $stmt->get_result()->fetch_assoc();
+
+                    if ($menu_item && $quantity <= $menu_item['stock']) {
+                        $_SESSION['cart'][$menu_id]['quantity'] = $quantity;
+                        $response['success'] = true;
+                        $response['message'] = "Jumlah item diperbarui.";
+                    } else {
+                        $response['message'] = "Stok tidak mencukupi.";
+                    }
+                } else {
+                    unset($_SESSION['cart'][$menu_id]);
+                    $response['success'] = true;
+                    $response['message'] = "Item dihapus dari keranjang.";
+                }
+            }
+            break;
+
+        case 'remove_from_cart':
+            if (isset($_SESSION['cart'][$menu_id])) {
+                $item_name = $_SESSION['cart'][$menu_id]['name'];
+                unset($_SESSION['cart'][$menu_id]);
+                $response['success'] = true;
+                $response['message'] = "{$item_name} berhasil dihapus.";
+            }
+            break;
     }
 
     // Perbarui data keranjang dalam respons
-    $response['cart_items'] = array_values($_SESSION['cart']);
-    $response['cart_count'] = array_sum(array_column($_SESSION['cart'], 'quantity'));
+    $cart = $_SESSION['cart'];
     $subtotal = array_sum(array_map(function ($item) {
         return $item['price'] * $item['quantity'];
-    }, $_SESSION['cart']));
-    $ppn = $subtotal * 0.10;
+    }, $cart));
+    $ppn = $subtotal * 0.11; // PPN 11%
     $total = $subtotal + $ppn;
+
+    $response['cart_items'] = array_values($cart);
+    $response['cart_count'] = array_sum(array_column($cart, 'quantity'));
     $response['subtotal'] = $subtotal;
     $response['ppn'] = $ppn;
     $response['total'] = $total;
@@ -99,143 +133,177 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
     exit();
 }
 
-// Menghitung total biaya untuk tampilan di keranjang (untuk halaman awal)
-$subtotal = array_sum(array_map(function ($item) {
-    return $item['price'] * $item['quantity'];
-}, $_SESSION['cart']));
-$ppn = $subtotal * 0.10;
-$total = $subtotal + $ppn;
-$cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
 
 // Handle checkout (tetap dengan redirect karena akan pindah ke halaman lain)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'checkout') {
+    $table_id = isset($_POST['table_id']) ? (int)$_POST['table_id'] : 1;
+    if (empty($_SESSION['cart'])) {
+        header("Location: index.php?table=$table_id&error=Keranjang+kosong");
+        exit();
+    }
+
     $payment_method = $_POST['payment_method'];
     $subtotal = array_sum(array_map(function ($item) {
         return $item['price'] * $item['quantity'];
     }, $_SESSION['cart']));
-    $ppn = $subtotal * 0.10;
+    $ppn = $subtotal * 0.11; // PPN 11%
     $total = $subtotal + $ppn;
-
-    if (empty($_SESSION['cart'])) {
-        header("Location: " . $_SERVER['REQUEST_URI'] . "&message=Keranjang+kosong");
-        exit();
-    }
-
-    // Simpan pesanan ke database dengan status 'pending_payment'
     $order_type = 'dine-in';
     $user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : null;
 
-    $sql = "INSERT INTO orders (table_id, user_id, order_type, status, subtotal, tax, total_amount, payment_method) VALUES (?, ?, ?, 'pending_payment', ?, ?, ?, ?)";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("iisddds", $table_id, $user_id, $order_type, $subtotal, $ppn, $total, $payment_method);
-    $stmt->execute();
-    $order_id = $stmt->insert_id;
-
-    foreach ($_SESSION['cart'] as $item) {
-        $sql = "INSERT INTO order_items (order_id, menu_id, quantity, price) VALUES (?, ?, ?, ?)";
+    $conn->begin_transaction();
+    try {
+        // Simpan pesanan
+        $sql = "INSERT INTO orders (table_id, user_id, order_type, status, subtotal, tax, total_amount, payment_method) VALUES (?, ?, ?, 'pending_payment', ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iiid", $order_id, $item['id'], $item['quantity'], $item['price']);
+        $stmt->bind_param("iisddds", $table_id, $user_id, $order_type, $subtotal, $ppn, $total, $payment_method);
         $stmt->execute();
-    }
+        $order_id = $stmt->insert_id;
 
-    $_SESSION['cart'] = [];
-    header("Location: index.php?table=$table_id&payment_method=$payment_method&total_amount=$total");
-    exit();
+        // Simpan item pesanan dan kurangi stok
+        foreach ($_SESSION['cart'] as $item) {
+            $sql = "INSERT INTO order_items (order_id, menu_id, quantity, price) VALUES (?, ?, ?, ?)";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("iiid", $order_id, $item['id'], $item['quantity'], $item['price']);
+            $stmt->execute();
+
+            $sql_update_stock = "UPDATE menu SET stock = stock - ? WHERE id = ?";
+            $stmt_update = $conn->prepare($sql_update_stock);
+            $stmt_update->bind_param("ii", $item['quantity'], $item['id']);
+            $stmt_update->execute();
+        }
+
+        $conn->commit();
+
+        $_SESSION['cart'] = [];
+        header("Location: index.php?table=$table_id&payment_method=$payment_method&total_amount=$total");
+        exit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        // Sebaiknya log error ini
+        header("Location: index.php?table=$table_id&error=Gagal+membuat+pesanan");
+        exit();
+    }
 }
 
+// Data untuk render halaman
+$table_id = isset($_GET['table']) ? (int)$_GET['table'] : 1;
+$menu_items = [];
+$sql = "SELECT * FROM menu WHERE is_available = TRUE ORDER BY category, name";
+$result = $conn->query($sql);
+while ($row = $result->fetch_assoc()) {
+    $menu_items[] = $row;
+}
+
+$categories = [];
+foreach ($menu_items as $item) {
+    $categories[$item['category']][] = $item;
+}
+$cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
 ?>
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" class="scroll-smooth">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Menu Cafe - Meja <?= htmlspecialchars($table_id ?? 'Tidak Diketahui') ?></title>
+    <title>Menu Cafe - Meja <?= htmlspecialchars($table_id) ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f3f4f6;
         }
 
         .toast-notif {
             position: fixed;
             top: 20px;
             left: 50%;
-            transform: translateX(-50%);
-            background-color: #10B981;
-            color: white;
-            padding: 1rem 2rem;
-            border-radius: 9999px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            transform: translate(-50%, -150%);
+            transition: transform 0.3s ease-in-out;
             z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.3s ease-in-out, visibility 0.3s ease-in-out;
         }
 
         .toast-notif.show {
-            opacity: 1;
-            visibility: visible;
+            transform: translate(-50%, 0);
+        }
+
+        #cart-drawer {
+            transition: transform 0.3s ease-in-out;
+        }
+
+        #cart-drawer.translate-x-full {
+            transform: translateX(100%);
+        }
+
+        #cart-backdrop {
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .category-nav-item.active {
+            color: #2563EB;
+            /* blue-600 */
+            border-bottom-color: #2563EB;
         }
     </style>
 </head>
 
-<body class="bg-gray-100 min-h-screen flex flex-col">
+<body class="bg-gray-50">
+
     <!-- Navbar -->
-    <nav class="bg-white shadow-md py-4 sticky top-0 z-50">
+    <nav class="bg-white shadow-sm py-3 sticky top-0 z-40">
         <div class="container mx-auto px-4 flex justify-between items-center">
-            <h1 class="text-2xl font-bold text-gray-800">Cafe Bahagia</h1>
+            <h1 class="text-xl md:text-2xl font-extrabold text-gray-800">Cafe Bahagia</h1>
             <div class="flex items-center space-x-4">
-                <?php if ($table_id) : ?>
-                    <span class="bg-gray-200 text-gray-800 px-4 py-2 rounded-full font-medium">Meja: <?= htmlspecialchars($table_id) ?></span>
-                <?php endif; ?>
-                <button id="loginButton" class="bg-blue-500 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-600 transition-colors">Login Member</button>
-                <div class="relative">
-                    <button id="cartButton" class="text-gray-600 hover:text-gray-900 transition-colors relative">
-                        <i class="fas fa-shopping-cart text-2xl"></i>
-                        <span id="cartBadge" class="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                            <?= $cart_count ?>
-                        </span>
-                    </button>
-                </div>
+                <span class="bg-gray-100 text-gray-800 px-3 py-1.5 rounded-full font-semibold text-sm">Meja: <?= htmlspecialchars($table_id) ?></span>
+                <button id="loginButton" class="bg-blue-500 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-600 transition-colors text-sm">Login</button>
             </div>
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <main class="container mx-auto px-4 py-8 flex-grow">
-        <?php if (isset($_GET['message'])) : ?>
-            <div id="toastNotification" class="toast-notif">
-                <p class="text-white font-semibold"><?= htmlspecialchars($_GET['message']) ?></p>
+    <!-- Category Nav -->
+    <div id="category-nav" class="bg-white sticky top-[60px] z-40 shadow-sm">
+        <div class="container mx-auto px-4">
+            <div class="flex space-x-4 md:space-x-8 overflow-x-auto whitespace-nowrap -mb-px">
+                <?php foreach ($categories as $category => $items) : ?>
+                    <a href="#category-<?= strtolower($category) ?>" class="category-nav-item py-3 px-1 text-sm md:text-base font-semibold text-gray-500 hover:text-blue-600 border-b-2 border-transparent transition-colors duration-200">
+                        <?= htmlspecialchars(ucfirst($category)) ?>
+                    </a>
+                <?php endforeach; ?>
             </div>
-        <?php endif; ?>
+        </div>
+    </div>
 
-        <div class="space-y-10">
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8">
+        <div class="space-y-12">
             <?php foreach ($categories as $category => $items) : ?>
-                <section>
-                    <h2 class="text-3xl font-bold text-gray-700 capitalize mb-6 mt-4"><?= htmlspecialchars($category) ?></h2>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <section id="category-<?= strtolower($category) ?>" class="scroll-mt-32">
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-800 capitalize mb-6"><?= htmlspecialchars($category) ?></h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         <?php foreach ($items as $item) : ?>
-                            <div class="bg-white rounded-xl shadow-lg overflow-hidden transform transition-transform hover:scale-105">
-                                <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-48 object-cover">
-                                <div class="p-6">
-                                    <h3 class="text-xl font-semibold text-gray-800 mb-1"><?= htmlspecialchars($item['name']) ?></h3>
-                                    <p class="text-gray-500 text-sm mb-3"><?= htmlspecialchars($item['description']) ?></p>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-gray-900 font-bold text-lg">Rp <?= number_format($item['price'], 0, ',', '.') ?></span>
-                                        <form class="add-to-cart-form" method="POST">
+                            <div class="bg-white rounded-2xl shadow-md overflow-hidden flex flex-col group">
+                                <div class="h-48 overflow-hidden">
+                                    <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transform transition-transform duration-300 group-hover:scale-110">
+                                </div>
+                                <div class="p-5 flex-grow flex flex-col">
+                                    <h3 class="text-lg font-bold text-gray-800 mb-1"><?= htmlspecialchars($item['name']) ?></h3>
+                                    <p class="text-gray-500 text-sm mb-4 flex-grow"><?= htmlspecialchars($item['description']) ?></p>
+                                    <div class="flex items-center justify-between mt-auto">
+                                        <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['price'], 0, ',', '.') ?></span>
+                                        <form class="add-to-cart-form">
                                             <input type="hidden" name="action" value="add_to_cart">
                                             <input type="hidden" name="menu_id" value="<?= $item['id'] ?>">
                                             <input type="hidden" name="is_ajax" value="1">
-                                            <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded-full font-medium hover:bg-green-600 transition-colors">Pesan</button>
+                                            <button type="submit" <?= $item['stock'] == 0 ? 'disabled' : '' ?> class="bg-blue-600 text-white px-5 py-2 rounded-full font-semibold text-sm hover:bg-blue-700 transition-all duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed transform hover:scale-105">Pesan</button>
                                         </form>
                                     </div>
-                                    <?php if ($item['stock'] < 5) : ?>
-                                        <p class="text-red-500 text-sm mt-2">Stok tinggal sedikit!</p>
+                                    <?php if ($item['stock'] <= 5 && $item['stock'] > 0) : ?>
+                                        <p class="text-yellow-600 text-xs font-semibold mt-2">Stok terbatas!</p>
+                                    <?php elseif ($item['stock'] == 0) : ?>
+                                        <p class="text-red-500 text-xs font-semibold mt-2">Stok habis</p>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -246,271 +314,164 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         </div>
     </main>
 
-    <!-- Cart Modal -->
-    <div id="cartModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 m-4 relative max-h-[90vh] overflow-y-auto">
-            <button id="closeCartModal" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800">
-                <i class="fas fa-times text-2xl"></i>
-            </button>
-            <h2 class="text-2xl font-bold mb-6 text-gray-800">Keranjang Anda</h2>
-            <div id="cart-content">
-                <!-- Konten keranjang akan diisi oleh JavaScript -->
-            </div>
-            <div id="empty-cart-message" class="text-gray-500 text-center">Keranjang Anda kosong.</div>
-            <div id="cart-summary" class="hidden">
-                <div class="border-t pt-4 mt-6 space-y-2">
-                    <div class="flex justify-between font-medium text-gray-700">
-                        <span>Subtotal</span>
-                        <span id="cart-subtotal"></span>
-                    </div>
-                    <div class="flex justify-between font-medium text-gray-700">
-                        <span>PPN (10%)</span>
-                        <span id="cart-ppn"></span>
-                    </div>
-                    <div class="flex justify-between font-bold text-lg text-gray-900">
-                        <span>Total</span>
-                        <span id="cart-total"></span>
-                    </div>
-                </div>
+    <!-- Cart Floating Action Button -->
+    <button id="cartFab" class="fixed bottom-6 right-6 bg-green-500 text-white rounded-full shadow-lg w-16 h-16 flex items-center justify-center z-50 transform hover:scale-110 transition-transform">
+        <i class="fas fa-shopping-cart text-2xl"></i>
+        <span id="cartBadgeFab" class="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-green-500"><?= $cart_count ?></span>
+    </button>
 
-                <div class="mt-6 space-y-4">
-                    <h3 class="text-lg font-semibold text-gray-800">Pilih Metode Pembayaran</h3>
-                    <form id="checkoutForm" method="POST">
-                        <input type="hidden" name="action" value="checkout">
-                        <div class="grid grid-cols-2 gap-4">
-                            <label class="p-4 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
-                                <input type="radio" name="payment_method" value="cash" class="sr-only" checked>
-                                <span class="block text-center font-medium">Cash</span>
-                                <span class="block text-center text-sm text-gray-500">Bayar di Kasir</span>
-                            </label>
-                            <label class="p-4 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
-                                <input type="radio" name="payment_method" value="transfer" class="sr-only">
-                                <span class="block text-center font-medium">Transfer Bank</span>
-                                <span class="block text-center text-sm text-gray-500">Via Rekening</span>
-                            </label>
-                            <label class="p-4 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
-                                <input type="radio" name="payment_method" value="virtual_account" class="sr-only">
-                                <span class="block text-center font-medium">Virtual Account</span>
-                                <span class="block text-center text-sm text-gray-500">VA Otomatis</span>
-                            </label>
-                            <label class="p-4 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
-                                <input type="radio" name="payment_method" value="QRIS" class="sr-only">
-                                <span class="block text-center font-medium">QRIS</span>
-                                <span class="block text-center text-sm text-gray-500">Scan Kode</span>
-                            </label>
-                        </div>
-                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors mt-6">Bayar Sekarang</button>
-                    </form>
-                </div>
-            </div>
+    <!-- Cart Drawer -->
+    <div id="cart-backdrop" class="fixed inset-0 bg-black bg-opacity-60 hidden z-50"></div>
+    <div id="cart-drawer" class="fixed top-0 right-0 h-full w-full max-w-md bg-gray-100 shadow-2xl z-50 transform translate-x-full flex flex-col">
+        <div class="flex justify-between items-center p-5 border-b bg-white">
+            <h2 class="text-xl font-bold text-gray-800">Keranjang Anda</h2>
+            <button id="closeCartDrawer" class="text-gray-500 hover:text-gray-800"><i class="fas fa-times text-2xl"></i></button>
         </div>
-    </div>
-
-    <!-- Login Modal -->
-    <div id="loginModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-sm m-4 relative">
-            <button id="closeLoginModal" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800">
-                <i class="fas fa-times text-2xl"></i>
-            </button>
-            <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Login Member</h2>
-            <form action="#" method="POST" class="space-y-4">
-                <div>
-                    <label for="username" class="block text-gray-700">Username</label>
-                    <input type="text" id="username" name="username" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <div id="cart-content" class="flex-grow p-5 overflow-y-auto space-y-4">
+            <!-- Cart items will be injected here -->
+        </div>
+        <div id="empty-cart-message" class="flex-grow flex flex-col items-center justify-center text-gray-500 hidden">
+            <i class="fas fa-shopping-basket text-6xl text-gray-300 mb-4"></i>
+            <p class="text-lg">Keranjang Anda kosong.</p>
+        </div>
+        <div id="cart-summary" class="p-5 border-t bg-white shadow-inner hidden">
+            <div class="space-y-2 mb-4">
+                <div class="flex justify-between font-medium text-gray-600"><span>Subtotal</span><span id="cart-subtotal"></span></div>
+                <div class="flex justify-between font-medium text-gray-600"><span>PPN (11%)</span><span id="cart-ppn"></span></div>
+                <div class="flex justify-between font-bold text-lg text-gray-900"><span>Total</span><span id="cart-total"></span></div>
+            </div>
+            <form id="checkoutForm" method="POST">
+                <input type="hidden" name="action" value="checkout">
+                <input type="hidden" name="table_id" value="<?= $table_id ?>">
+                <h3 class="text-md font-semibold text-gray-800 mb-3">Metode Pembayaran</h3>
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <label class="p-3 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all"><input type="radio" name="payment_method" value="cash" class="sr-only" checked><span class="block text-center font-medium text-sm">Cash</span></label>
+                    <label class="p-3 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all"><input type="radio" name="payment_method" value="QRIS" class="sr-only"><span class="block text-center font-medium text-sm">QRIS</span></label>
+                    <label class="p-3 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all"><input type="radio" name="payment_method" value="transfer" class="sr-only"><span class="block text-center font-medium text-sm">Transfer</span></label>
+                    <label class="p-3 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all"><input type="radio" name="payment_method" value="virtual_account" class="sr-only"><span class="block text-center font-medium text-sm">Virtual Acct</span></label>
                 </div>
-                <div>
-                    <label for="password" class="block text-gray-700">Password</label>
-                    <input type="password" id="password" name="password" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                </div>
-                <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700">Masuk</button>
+                <button type="submit" class="w-full bg-green-600 text-white font-bold py-3.5 rounded-xl hover:bg-green-700 transition-colors">Bayar Sekarang</button>
             </form>
         </div>
     </div>
 
-    <!-- Payment Details Modal -->
-    <div id="paymentDetailsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 m-4 relative max-h-[90vh] overflow-y-auto">
-            <button id="closePaymentModal" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800">
-                <i class="fas fa-times text-2xl"></i>
-            </button>
-            <h2 class="text-2xl font-bold mb-4 text-gray-800">Instruksi Pembayaran</h2>
-            <div id="payment-content">
-                <!-- Content will be dynamically loaded here -->
-            </div>
+    <!-- Modals (Login, Payment Details) -->
+    <div id="loginModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
+        <!-- Login modal content -->
+    </div>
+    <div id="paymentDetailsModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 m-4 relative">
+            <button id="closePaymentModal" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800"><i class="fas fa-times text-2xl"></i></button>
+            <h2 class="text-xl font-bold mb-4 text-gray-800">Instruksi Pembayaran</h2>
+            <div id="payment-content"></div>
         </div>
     </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            const cartButton = document.getElementById('cartButton');
-            const cartModal = document.getElementById('cartModal');
-            const closeCartModal = document.getElementById('closeCartModal');
-            const loginButton = document.getElementById('loginButton');
-            const loginModal = document.getElementById('loginModal');
-            const closeLoginModal = document.getElementById('closeLoginModal');
-            const paymentDetailsModal = document.getElementById('paymentDetailsModal');
-            const closePaymentModal = document.getElementById('closePaymentModal');
-            const paymentContent = document.getElementById('payment-content');
-            const checkoutForm = document.getElementById('checkoutForm');
-            const toastNotif = document.getElementById('toastNotification');
+            const cartFab = document.getElementById('cartFab');
+            const cartDrawer = document.getElementById('cart-drawer');
+            const cartBackdrop = document.getElementById('cart-backdrop');
+            const closeCartDrawer = document.getElementById('closeCartDrawer');
             const cartContent = document.getElementById('cart-content');
-            const cartBadge = document.getElementById('cartBadge');
+            const cartBadgeFab = document.getElementById('cartBadgeFab');
             const cartSummary = document.getElementById('cart-summary');
             const emptyCartMessage = document.getElementById('empty-cart-message');
+            const paymentDetailsModal = document.getElementById('paymentDetailsModal');
+            const closePaymentModal = document.getElementById('closePaymentModal');
 
-            cartButton.addEventListener('click', async () => {
-                await updateCartModal();
-                cartModal.classList.remove('hidden');
-            });
-            closeCartModal.addEventListener('click', () => {
-                cartModal.classList.add('hidden');
-            });
+            const toggleCartDrawer = (show) => {
+                cartDrawer.classList.toggle('translate-x-full', !show);
+                cartBackdrop.classList.toggle('hidden', !show);
+            };
 
-            loginButton.addEventListener('click', () => {
-                loginModal.classList.remove('hidden');
+            cartFab.addEventListener('click', () => {
+                updateCartData();
+                toggleCartDrawer(true);
             });
-            closeLoginModal.addEventListener('click', () => {
-                loginModal.classList.add('hidden');
-            });
+            closeCartDrawer.addEventListener('click', () => toggleCartDrawer(false));
+            cartBackdrop.addEventListener('click', () => toggleCartDrawer(false));
 
             closePaymentModal.addEventListener('click', () => {
                 paymentDetailsModal.classList.add('hidden');
+                // Clean up URL after closing payment modal
+                const url = new URL(window.location.href);
+                url.searchParams.delete('payment_method');
+                url.searchParams.delete('total_amount');
+                window.history.replaceState({}, '', url);
             });
 
-            // Logic to show and hide toast notification
-            if (toastNotif) {
-                toastNotif.classList.add('show');
-                setTimeout(() => {
-                    toastNotif.classList.remove('show');
-                    // Clean up URL after notification is shown
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete('message');
-                    window.history.replaceState({}, '', url);
-                }, 3000); // Hide after 3 seconds
-            }
+            // Function to format currency
+            const formatCurrency = (amount) => `Rp${Number(amount).toLocaleString('id-ID')}`;
 
-            // Check if payment details should be shown on page load
-            const urlParams = new URLSearchParams(window.location.search);
-            const paymentMethod = urlParams.get('payment_method');
-            const totalAmount = urlParams.get('total_amount');
-            if (paymentMethod && totalAmount) {
-                cartModal.classList.add('hidden'); // Hide cart if showing
-                displayPaymentDetails(paymentMethod, totalAmount);
-            }
-
-            // Handle add to cart forms
+            // Handle adding items to cart
             document.querySelectorAll('.add-to-cart-form').forEach(form => {
                 form.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     const formData = new FormData(form);
-
-                    try {
-                        const response = await fetch('index.php', {
-                            method: 'POST',
-                            body: formData
-                        });
-                        const data = await response.json();
-
-                        if (data.success) {
-                            showToast(data.message, true);
-                            updateCartUI(data);
-                        } else {
-                            showToast(data.message, false);
-                        }
-
-                    } catch (error) {
-                        console.error('Error:', error);
-                        showToast('Gagal menambahkan item ke keranjang.', false);
+                    const response = await sendCartAction(formData);
+                    if (response) {
+                        showToast(response.message, response.success);
+                        if (response.success) updateCartUI(response);
                     }
                 });
             });
 
-            // Handle remove from cart dynamically
+            // Handle cart actions (update quantity, remove) via event delegation
             cartContent.addEventListener('submit', async (e) => {
-                if (e.target.classList.contains('remove-from-cart-form')) {
+                if (e.target.matches('.update-cart-form')) {
                     e.preventDefault();
                     const formData = new FormData(e.target);
-
-                    try {
-                        const response = await fetch('index.php', {
-                            method: 'POST',
-                            body: formData
-                        });
-                        const data = await response.json();
-
-                        if (data.success) {
-                            showToast(data.message, true);
-                            updateCartUI(data);
-                        } else {
-                            showToast(data.message, false);
-                        }
-                    } catch (error) {
-                        console.error('Error:', error);
-                        showToast('Gagal menghapus item dari keranjang.', false);
+                    const response = await sendCartAction(formData);
+                    if (response && response.success) {
+                        updateCartUI(response);
+                        // No toast for simple quantity updates to avoid spam
+                    } else if (response) {
+                        showToast(response.message, false);
                     }
                 }
             });
 
+            cartContent.addEventListener('click', async (e) => {
+                if (e.target.matches('.quantity-btn')) {
+                    e.preventDefault();
+                    const form = e.target.closest('form');
+                    const quantityInput = form.querySelector('input[name="quantity"]');
+                    let quantity = parseInt(quantityInput.value);
+                    const change = parseInt(e.target.dataset.change);
 
-            function showToast(message, isSuccess) {
-                const toast = document.createElement('div');
-                toast.className = `toast-notif ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`;
-                toast.innerHTML = `<p class="text-white font-semibold">${message}</p>`;
-                document.body.appendChild(toast);
+                    quantity += change;
+                    if (quantity < 0) quantity = 0; // Prevent negative numbers
 
-                setTimeout(() => {
-                    toast.classList.add('show');
-                }, 10);
+                    quantityInput.value = quantity;
 
-                setTimeout(() => {
-                    toast.classList.remove('show');
-                    setTimeout(() => {
-                        document.body.removeChild(toast);
-                    }, 500);
-                }, 3000);
-            }
+                    const formData = new FormData(form);
+                    const response = await sendCartAction(formData);
+                    if (response && response.success) {
+                        updateCartUI(response);
+                    } else if (response) {
+                        showToast(response.message, false);
+                    }
+                }
+            });
 
-            function updateCartUI(data) {
-                cartBadge.textContent = data.cart_count;
-                if (data.cart_count > 0) {
-                    emptyCartMessage.classList.add('hidden');
-                    cartSummary.classList.remove('hidden');
-                    cartContent.innerHTML = data.cart_items.map(item => `
-                        <div class="flex items-center justify-between p-3 bg-gray-100 rounded-lg">
-                            <div class="flex items-center space-x-4">
-                                <img src="${item.image}" alt="${item.name}" class="w-16 h-16 object-cover rounded-md">
-                                <div>
-                                    <p class="font-semibold text-gray-800">${item.name}</p>
-                                    <p class="text-sm text-gray-500">Rp ${item.price.toLocaleString('id-ID')}</p>
-                                    <p class="text-sm text-gray-500">Jumlah: ${item.quantity}</p>
-                                </div>
-                            </div>
-                            <form class="remove-from-cart-form" method="POST">
-                                <input type="hidden" name="action" value="remove_from_cart">
-                                <input type="hidden" name="menu_id" value="${item.id}">
-                                <input type="hidden" name="is_ajax" value="1">
-                                <button type="submit" class="text-red-500 hover:text-red-700 transition-colors">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
-                            </form>
-                        </div>
-                    `).join('');
-
-                    document.getElementById('cart-subtotal').textContent = `Rp ${data.subtotal.toLocaleString('id-ID')}`;
-                    document.getElementById('cart-ppn').textContent = `Rp ${data.ppn.toLocaleString('id-ID')}`;
-                    document.getElementById('cart-total').textContent = `Rp ${data.total.toLocaleString('id-ID')}`;
-
-                } else {
-                    cartContent.innerHTML = '';
-                    emptyCartMessage.classList.remove('hidden');
-                    cartSummary.classList.add('hidden');
+            async function sendCartAction(formData) {
+                try {
+                    const response = await fetch('index.php', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    return await response.json();
+                } catch (error) {
+                    console.error('Error:', error);
+                    showToast('Terjadi kesalahan jaringan.', false);
+                    return null;
                 }
             }
 
-            // Function to fetch and update cart modal content
-            async function updateCartModal() {
+            async function updateCartData() {
                 try {
-                    const response = await fetch('index.php?is_ajax=1&get_cart=1');
+                    const response = await fetch('index.php?is_ajax_get_cart=1');
                     const data = await response.json();
                     updateCartUI(data);
                 } catch (error) {
@@ -518,75 +479,111 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 }
             }
 
-            function displayPaymentDetails(method, total) {
-                let contentHTML = '';
-                const formattedTotal = parseFloat(total).toLocaleString('id-ID', {
-                    style: 'currency',
-                    currency: 'IDR'
-                });
+            function updateCartUI(data) {
+                cartBadgeFab.textContent = data.cart_count;
+                cartBadgeFab.classList.toggle('hidden', data.cart_count === 0);
 
+                if (data.cart_count > 0) {
+                    emptyCartMessage.classList.add('hidden');
+                    cartSummary.classList.remove('hidden');
+
+                    cartContent.innerHTML = data.cart_items.map(item => `
+                    <div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm">
+                        <div class="flex items-start space-x-3">
+                            <img src="${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md">
+                            <div>
+                                <p class="font-bold text-gray-800 text-md">${item.name}</p>
+                                <p class="text-sm text-gray-600">${formatCurrency(item.price)}</p>
+                            </div>
+                        </div>
+                        <form class="update-cart-form flex flex-col items-end">
+                            <div class="flex items-center rounded-full border bg-gray-50 overflow-hidden">
+                                <button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button>
+                                <input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly>
+                                <button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button>
+                            </div>
+                            <input type="hidden" name="action" value="update_quantity">
+                            <input type="hidden" name="menu_id" value="${item.id}">
+                             <input type="hidden" name="is_ajax" value="1">
+                        </form>
+                    </div>
+                `).join('');
+
+                    document.getElementById('cart-subtotal').textContent = formatCurrency(data.subtotal);
+                    document.getElementById('cart-ppn').textContent = formatCurrency(data.ppn);
+                    document.getElementById('cart-total').textContent = formatCurrency(data.total);
+                } else {
+                    cartContent.innerHTML = '';
+                    emptyCartMessage.classList.remove('hidden');
+                    cartSummary.classList.add('hidden');
+                }
+            }
+
+            function showToast(message, isSuccess) {
+                const existingToast = document.querySelector('.toast-notif');
+                if (existingToast) existingToast.remove();
+
+                const toast = document.createElement('div');
+                toast.className = `toast-notif p-4 rounded-lg shadow-lg text-white font-semibold ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+
+                setTimeout(() => toast.classList.add('show'), 10);
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                    setTimeout(() => document.body.removeChild(toast), 300);
+                }, 2500);
+            }
+
+            // Check for payment details on page load
+            const urlParams = new URLSearchParams(window.location.search);
+            const paymentMethod = urlParams.get('payment_method');
+            const totalAmount = urlParams.get('total_amount');
+            if (paymentMethod && totalAmount) {
+                displayPaymentDetails(paymentMethod, totalAmount);
+            }
+            if (urlParams.has('error')) {
+                showToast(urlParams.get('error'), false);
+            }
+
+            function displayPaymentDetails(method, total) {
+                const formattedTotal = formatCurrency(total);
+                let contentHTML = '';
                 switch (method) {
                     case 'cash':
-                        contentHTML = `
-                            <div class="p-4 bg-gray-100 rounded-lg">
-                                <h3 class="text-xl font-semibold mb-2">Pembayaran Tunai</h3>
-                                <p class="text-gray-700">Silakan datang ke kasir dan sebutkan nomor meja Anda **Meja: <?= htmlspecialchars($table_id) ?>** untuk melakukan pembayaran.</p>
-                                <p class="mt-4 text-sm text-gray-500">Total Pembayaran: <span class="font-bold text-gray-800">${formattedTotal}</span></p>
-                            </div>
-                        `;
-                        break;
-                    case 'virtual_account':
-                        contentHTML = `
-                            <div class="p-4 bg-gray-100 rounded-lg">
-                                <h3 class="text-xl font-semibold mb-2">Pembayaran Virtual Account</h3>
-                                <p class="text-gray-700">Mohon lakukan pembayaran sejumlah ${formattedTotal} ke nomor Virtual Account di bawah ini:</p>
-                                <div class="bg-white p-4 rounded-lg mt-4 shadow">
-                                    <p class="text-lg font-bold text-gray-800">901234567890</p>
-                                    <p class="text-sm text-gray-500">a/n Cafe Bahagia</p>
-                                </div>
-                            </div>
-                        `;
+                        contentHTML = `<p>Silakan ke kasir, sebutkan nomor meja <b>(Meja: ${<?= $table_id ?>})</b> dan bayar sejumlah <b>${formattedTotal}</b>.</p>`;
                         break;
                     case 'QRIS':
-                        contentHTML = `
-                            <div class="p-4 bg-gray-100 rounded-lg">
-                                <h3 class="text-xl font-semibold mb-2">Pembayaran QRIS</h3>
-                                <p class="text-gray-700">Scan QRIS di bawah ini dengan aplikasi pembayaran favorit Anda untuk menyelesaikan transaksi.</p>
-                                <img src="https://placehold.co/300x300/e5e7eb/000000?text=QRIS+Code" alt="QRIS Code" class="mx-auto my-4 rounded-lg">
-                                <p class="mt-4 text-sm text-gray-500">Total Pembayaran: <span class="font-bold text-gray-800">${formattedTotal}</span></p>
-                            </div>
-                        `;
+                        contentHTML = `<p>Scan QRIS di bawah ini dan bayar sejumlah <b>${formattedTotal}</b>.</p><img src="https://placehold.co/300x300/eee/000?text=QRIS" class="mx-auto my-4">`;
                         break;
                     case 'transfer':
-                        contentHTML = `
-                            <div class="p-4 bg-gray-100 rounded-lg">
-                                <h3 class="text-xl font-semibold mb-2">Pembayaran Transfer Bank</h3>
-                                <p class="text-gray-700 mb-4">Pilih salah satu bank di bawah ini untuk transfer sejumlah ${formattedTotal}.</p>
-                                <div class="space-y-4">
-                                    <div class="bg-white p-4 rounded-lg shadow">
-                                        <p class="font-semibold text-gray-800">BCA</p>
-                                        <p class="text-sm text-gray-500">No. Rek: 123-456-7890</p>
-                                        <p class="text-sm text-gray-500">a/n Cafe Bahagia</p>
-                                    </div>
-                                    <div class="bg-white p-4 rounded-lg shadow">
-                                        <p class="font-semibold text-gray-800">Mandiri</p>
-                                        <p class="text-sm text-gray-500">No. Rek: 123-456-7890</p>
-                                        <p class="text-sm text-gray-500">a/n Cafe Bahagia</p>
-                                    </div>
-                                    <div class="bg-white p-4 rounded-lg shadow">
-                                        <p class="font-semibold text-gray-800">BRI</p>
-                                        <p class="text-sm text-gray-500">No. Rek: 123-456-7890</p>
-                                        <p class="text-sm text-gray-500">a/n Cafe Bahagia</p>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
+                        contentHTML = `<p>Transfer sejumlah <b>${formattedTotal}</b> ke:<br>BCA: 123456789 (a/n Cafe Bahagia)</p>`;
+                        break;
+                    case 'virtual_account':
+                        contentHTML = `<p>Bayar sejumlah <b>${formattedTotal}</b> ke VA berikut:<br>VA: 901234567890 (a/n Cafe Bahagia)</p>`;
                         break;
                 }
-
-                paymentContent.innerHTML = contentHTML;
+                document.getElementById('payment-content').innerHTML = contentHTML;
                 paymentDetailsModal.classList.remove('hidden');
             }
+
+            // Sticky category nav active state handler
+            const categoryNav = document.getElementById('category-nav');
+            const navItems = categoryNav.querySelectorAll('.category-nav-item');
+            const sections = document.querySelectorAll('section[id^="category-"]');
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        navItems.forEach(nav => {
+                            nav.classList.toggle('active', nav.getAttribute('href').substring(1) === entry.target.id);
+                        });
+                    }
+                });
+            }, {
+                rootMargin: "-100px 0px -50% 0px",
+                threshold: 0
+            });
+            sections.forEach(sec => observer.observe(sec));
         });
     </script>
 </body>
