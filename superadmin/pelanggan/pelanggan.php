@@ -1,88 +1,121 @@
 <?php
-// Path diubah untuk menyesuaikan lokasi folder baru
+// File: superadmin/pelanggan/pelanggan.php
+
+// Panggil header dan koneksi database dengan path yang benar
 require_once '../includes/header.php';
 require_once '../../db_connect.php';
 
-// Ambil semua data pengguna dari database
+// PERUBAHAN: Mengambil data pengguna dengan ROLE 'member'
 $users = [];
-// Pastikan Anda sudah menjalankan ALTER TABLE untuk menambahkan kolom email dan phone_number
-$sql = "SELECT id, username, email, phone_number, role FROM users ORDER BY username ASC";
+$sql = "SELECT id, username, email, phone_number, role FROM users WHERE role = 'member' ORDER BY created_at DESC";
 $result = $conn->query($sql);
-if ($result) {
-    while($row = $result->fetch_assoc()) {
+if ($result && $result->num_rows > 0) {
+    while ($row = $result->fetch_assoc()) {
         $users[] = $row;
     }
 }
 ?>
 
 <div class="container mx-auto">
-    <!-- Header: Pencarian dan Tombol Tambah -->
+    <!-- Header Halaman -->
     <div class="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-        <div class="w-full sm:w-1/3">
+        <div class="w-full sm:w-2/3">
              <div class="relative">
                 <span class="absolute inset-y-0 left-0 flex items-center pl-3">
                     <i class="fas fa-search text-gray-400"></i>
                 </span>
-                <input type="text" id="searchInput" class="w-full pl-10 pr-4 py-2 border rounded-lg" placeholder="Cari nama atau email...">
+                <input type="text" id="searchInput" class="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Cari nama member atau email...">
             </div>
         </div>
-        <div>
-            <!-- Link ini tidak perlu diubah karena tujuannya ada di folder yang sama -->
-            <a href="tambah_pelanggan.php" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg inline-flex items-center">
-                <i class="fas fa-user-plus mr-2"></i>
-                <span>Tambah Pelanggan Baru</span>
-            </a>
-        </div>
+        <a href="tambah_pelanggan.php" class="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center">
+            <i class="fas fa-plus mr-2"></i> Tambah Member
+        </a>
     </div>
 
-    <!-- Grid Kartu Pelanggan -->
-    <div id="customerGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <?php if (!empty($users)): ?>
-            <?php foreach ($users as $user): ?>
-                <div class="customer-card bg-white rounded-xl shadow-lg p-5" data-name="<?= strtolower(htmlspecialchars($user['username'])) ?>" data-email="<?= strtolower(htmlspecialchars($user['email'] ?? '')) ?>">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <h3 class="text-xl font-bold text-gray-800"><?= htmlspecialchars($user['username']) ?></h3>
-                            <p class="text-sm font-semibold capitalize text-gray-500"><?= htmlspecialchars($user['role']) ?></p>
-                        </div>
-                        <div class="flex items-center gap-2">
-                             <a href="edit_pelanggan.php?id=<?= $user['id'] ?>" class="text-gray-500 hover:text-blue-600" title="Edit">
-                                <i class="fas fa-pencil-alt"></i>
-                            </a>
-                        </div>
-                    </div>
-                    <hr class="my-4">
-                    <div class="space-y-2 text-sm text-gray-700">
-                        <p><i class="fas fa-envelope mr-2 text-gray-400"></i> <?= htmlspecialchars($user['email'] ?? 'Tidak ada email') ?></p>
-                        <p><i class="fas fa-phone mr-2 text-gray-400"></i> <?= htmlspecialchars($user['phone_number'] ?? 'Tidak ada no. telp') ?></p>
-                    </div>
-                </div>
-            <?php endforeach; ?>
-        <?php else: ?>
-            <p class="text-gray-500 lg:col-span-3 text-center">Belum ada pelanggan yang ditambahkan.</p>
-        <?php endif; ?>
+    <!-- Tabel Pelanggan -->
+    <div class="bg-white rounded-xl shadow-lg overflow-x-auto">
+        <table class="min-w-full leading-normal">
+            <thead>
+                <tr class="bg-gray-100">
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                        Nama Member
+                    </th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                        Email
+                    </th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                        No. Telepon
+                    </th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                        Aksi
+                    </th>
+                </tr>
+            </thead>
+            <tbody id="customer-table-body">
+                <?php if (!empty($users)): ?>
+                    <?php foreach ($users as $user): ?>
+                        <tr class="customer-row" data-name="<?= strtolower(htmlspecialchars($user['username'])) ?>" data-email="<?= strtolower(htmlspecialchars($user['email'] ?? '')) ?>">
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+                                <p class="text-gray-900 whitespace-no-wrap font-medium"><?= htmlspecialchars($user['username']) ?></p>
+                            </td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+                                <p class="text-gray-900 whitespace-no-wrap"><?= htmlspecialchars($user['email'] ?? 'Tidak ada email') ?></p>
+                            </td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+                                <p class="text-gray-900 whitespace-no-wrap"><?= htmlspecialchars($user['phone_number'] ?? 'Tidak ada no. telp') ?></p>
+                            </td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+                                <a href="detail_pelanggan.php?id=<?= $user['id'] ?>" class="text-blue-600 hover:text-blue-800 font-semibold mr-4">Detail</a>
+                                <a href="edit_pelanggan.php?id=<?= $user['id'] ?>" class="text-green-600 hover:text-green-800 font-semibold">Edit</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="4" class="text-center py-10 text-gray-500">
+                            Tidak ada data member yang ditemukan.
+                        </td>
+                    </tr>
+                <?php endif; ?>
+                <tr id="no-results" class="hidden">
+                    <td colspan="4" class="text-center py-10 text-gray-500">
+                        Pencarian tidak menemukan hasil.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 </div>
 
 <script>
+// Skrip untuk fungsionalitas pencarian real-time
 document.getElementById('searchInput').addEventListener('keyup', function() {
     let filter = this.value.toLowerCase();
-    let customerCards = document.querySelectorAll('.customer-card');
+    let customerRows = document.querySelectorAll('tbody .customer-row');
+    let noResults = document.getElementById('no-results');
+    let visibleCount = 0;
     
-    customerCards.forEach(card => {
-        let name = card.getAttribute('data-name');
-        let email = card.getAttribute('data-email');
+    customerRows.forEach(row => {
+        let name = row.getAttribute('data-name');
+        let email = row.getAttribute('data-email');
         if (name.includes(filter) || email.includes(filter)) {
-            card.style.display = 'block';
+            row.style.display = ''; // Tampilkan baris
+            visibleCount++;
         } else {
-            card.style.display = 'none';
+            row.style.display = 'none'; // Sembunyikan baris
         }
     });
+
+    if(visibleCount === 0 && customerRows.length > 0) {
+        noResults.style.display = 'table-row';
+    } else {
+        noResults.style.display = 'none';
+    }
 });
 </script>
 
 <?php
-// Path diubah untuk menyesuaikan lokasi folder baru
 require_once '../includes/footer.php';
 $conn->close();
 ?>
+
