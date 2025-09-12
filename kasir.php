@@ -26,31 +26,30 @@ if (isset($_GET['ajax'])) {
     if ($_GET['action'] === 'get_order_details' && isset($_GET['order_id'])) {
         $order_id = (int)$_GET['order_id'];
 
-        // Ambil item pesanan, gunakan harga dari tabel menu untuk akurasi
-        $sql_items = "SELECT m.name, oi.quantity, m.price 
-                      FROM order_items oi 
-                      JOIN menu m ON oi.menu_id = m.id 
-                      WHERE oi.order_id = ?";
+        // Ambil info dasar pesanan
+        $sql_order = "SELECT subtotal, discount_amount, tax, total_amount FROM orders WHERE id = ?";
+        $stmt_order = $conn->prepare($sql_order);
+        $stmt_order->bind_param("i", $order_id);
+        $stmt_order->execute();
+        $order_data = $stmt_order->get_result()->fetch_assoc();
+
+        // Ambil item pesanan
+        $sql_items = "SELECT m.name, oi.quantity, oi.price FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
         $stmt_items = $conn->prepare($sql_items);
         $stmt_items->bind_param("i", $order_id);
         $stmt_items->execute();
         $result_items = $stmt_items->get_result();
         $items = [];
-        $recalculated_subtotal = 0;
         while ($row = $result_items->fetch_assoc()) {
             $items[] = $row;
-            $recalculated_subtotal += $row['quantity'] * $row['price'];
         }
-
-        // Hitung ulang pajak dan total untuk memastikan akurasi
-        $recalculated_tax = $recalculated_subtotal * 0.11; // PPN 11%
-        $recalculated_total = $recalculated_subtotal + $recalculated_tax;
 
         $response_data = [
             'items' => $items,
-            'subtotal' => $recalculated_subtotal,
-            'tax' => $recalculated_tax,
-            'total_amount' => $recalculated_total
+            'subtotal' => $order_data['subtotal'],
+            'discount' => $order_data['discount_amount'],
+            'tax' => $order_data['tax'],
+            'total_amount' => $order_data['total_amount']
         ];
 
         $response = ['success' => true, 'data' => $response_data];
@@ -125,27 +124,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =========================================================================
 //  LOGIC BAGIAN C: Mengambil data untuk Tampilan Halaman
 // =========================================================================
+$base_select = "SELECT o.*, t.table_number, u.name AS member_name 
+                FROM orders o 
+                LEFT JOIN tables t ON o.table_id = t.id 
+                LEFT JOIN users u ON o.user_id = u.id";
+
 // 1. Pesanan menunggu pembayaran tunai
 $pending_orders = [];
-$sql_pending = "SELECT o.*, t.table_number FROM orders o LEFT JOIN tables t ON o.table_id = t.id WHERE o.status = 'pending_payment' AND o.payment_method = 'cash' ORDER BY o.created_at DESC";
+$sql_pending = "$base_select WHERE o.status = 'pending_payment' AND o.payment_method = 'cash' ORDER BY o.created_at DESC";
 $result_pending = $conn->query($sql_pending);
 if ($result_pending) while ($row = $result_pending->fetch_assoc()) $pending_orders[] = $row;
 
-// 2. Pesanan Non-Tunai Menunggu Konfirmasi (BARU)
+// 2. Pesanan Non-Tunai Menunggu Konfirmasi
 $non_cash_orders = [];
-$sql_non_cash = "SELECT o.*, t.table_number FROM orders o LEFT JOIN tables t ON o.table_id = t.id WHERE o.status = 'pending_payment' AND o.payment_method IN ('qris', 'transfer', 'virtual_account') ORDER BY o.created_at DESC";
+$sql_non_cash = "$base_select WHERE o.status = 'pending_payment' AND o.payment_method IN ('qris', 'transfer', 'virtual_account') ORDER BY o.created_at DESC";
 $result_non_cash = $conn->query($sql_non_cash);
 if ($result_non_cash) while ($row = $result_non_cash->fetch_assoc()) $non_cash_orders[] = $row;
 
-// 3. Pesanan sudah dibayar (status completed), TAPI struk belum dicetak (receipt_printed_at IS NULL)
+// 3. Pesanan sudah dibayar, TAPI struk belum dicetak
 $paid_orders = [];
-$sql_paid = "SELECT o.*, t.table_number, u.name AS user_name FROM orders o LEFT JOIN tables t ON o.table_id = t.id LEFT JOIN users u ON o.user_id = u.id WHERE o.status = 'completed' AND o.receipt_printed_at IS NULL ORDER BY o.created_at DESC";
+$sql_paid = "$base_select WHERE o.status = 'completed' AND o.receipt_printed_at IS NULL ORDER BY o.created_at DESC";
 $result_paid = $conn->query($sql_paid);
 if ($result_paid) while ($row = $result_paid->fetch_assoc()) $paid_orders[] = $row;
 
-// 4. Arsip Struk: Pesanan sudah dibayar (status completed) DAN struk sudah dicetak (receipt_printed_at IS NOT NULL)
+// 4. Arsip Struk
 $archived_orders = [];
-$sql_archived = "SELECT o.*, t.table_number, u.name AS user_name FROM orders o LEFT JOIN tables t ON o.table_id = t.id LEFT JOIN users u ON o.user_id = u.id WHERE o.status = 'completed' AND o.receipt_printed_at IS NOT NULL ORDER BY o.receipt_printed_at DESC";
+$sql_archived = "$base_select WHERE o.status = 'completed' AND o.receipt_printed_at IS NOT NULL ORDER BY o.receipt_printed_at DESC";
 $result_archived = $conn->query($sql_archived);
 if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_orders[] = $row;
 ?>
@@ -232,10 +236,10 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
         </header>
 
         <!-- Notifikasi -->
-        <?php if (isset($_GET['message'])): ?><div id="success-message" class="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 mb-6 rounded" role="alert">
+        <?php if (isset($_GET['message'])) : ?><div id="success-message" class="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 mb-6 rounded" role="alert">
                 <p><?= htmlspecialchars($_GET['message']) ?></p>
             </div><?php endif; ?>
-        <?php if (isset($_GET['error'])): ?><div id="error-message" class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded" role="alert">
+        <?php if (isset($_GET['error'])) : ?><div id="error-message" class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded" role="alert">
                 <p><?= htmlspecialchars($_GET['error']) ?></p>
             </div><?php endif; ?>
 
@@ -243,15 +247,21 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
         <section class="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-8">
             <h2 class="text-2xl font-bold text-red-600 mb-4">Menunggu Pembayaran Tunai</h2>
             <div id="pending-payment-list" class="space-y-4">
-                <?php if (empty($pending_orders)): ?>
+                <?php if (empty($pending_orders)) : ?>
                     <p class="text-gray-500">Tidak ada pesanan yang menunggu pembayaran tunai.</p>
-                    <?php else: foreach ($pending_orders as $order): ?>
+                    <?php else : foreach ($pending_orders as $order) : ?>
                         <div class="bg-yellow-50 p-4 rounded-lg shadow-sm border border-yellow-200">
                             <div class="flex flex-col sm:flex-row sm:justify-between sm:items-baseline gap-2 mb-3">
                                 <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                                 <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                             </div>
-                            <?php if ($order['table_number']): ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+                            <?php if (!empty($order['customer_name'])) : ?>
+                                <p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p>
+                            <?php elseif (!empty($order['member_name'])) : ?>
+                                <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
+                            <?php endif; ?>
+
+                            <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
                             <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                             <form method="POST" action="kasir.php">
                                 <input type="hidden" name="action" value="process_cash_payment">
@@ -275,15 +285,20 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
         <section class="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-8">
             <h2 class="text-2xl font-bold text-purple-600 mb-4">Pesanan Non-Tunai (Menunggu Konfirmasi)</h2>
             <div id="non-cash-list" class="space-y-4">
-                <?php if (empty($non_cash_orders)): ?>
+                <?php if (empty($non_cash_orders)) : ?>
                     <p class="text-gray-500">Tidak ada pesanan non-tunai yang menunggu konfirmasi.</p>
-                    <?php else: foreach ($non_cash_orders as $order): ?>
+                    <?php else : foreach ($non_cash_orders as $order) : ?>
                         <div class="bg-purple-50 p-4 rounded-lg shadow-sm border border-purple-200">
                             <div class="flex flex-col sm:flex-row sm:justify-between sm:items-baseline gap-2 mb-2">
                                 <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                                 <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                             </div>
-                            <?php if ($order['table_number']): ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+                            <?php if (!empty($order['customer_name'])) : ?>
+                                <p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p>
+                            <?php elseif (!empty($order['member_name'])) : ?>
+                                <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
+                            <?php endif; ?>
+                            <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
                             <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                             <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
                             <div class="mt-4 flex flex-wrap gap-2">
@@ -303,11 +318,11 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
 
         <!-- 3. Pesanan Sudah Dibayar -->
         <section class="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-8">
-            <h2 class="text-2xl font-bold text-blue-600 mb-4">Pesanan Sudah Dibayar</h2>
+            <h2 class="text-2xl font-bold text-blue-600 mb-4">Pesanan Siap Cetak Struk</h2>
             <div id="paid-orders-list" class="space-y-4">
-                <?php if (empty($paid_orders)): ?>
+                <?php if (empty($paid_orders)) : ?>
                     <p class="text-gray-500 no-paid-placeholder">Tidak ada pesanan yang perlu dicetak struknya.</p>
-                    <?php else: foreach ($paid_orders as $order): ?>
+                    <?php else : foreach ($paid_orders as $order) : ?>
                         <?= generate_order_card($order, $cashier_name, $conn, false) ?>
                 <?php endforeach;
                 endif; ?>
@@ -318,9 +333,9 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
         <section class="bg-white rounded-xl shadow-lg p-4 sm:p-6">
             <h2 class="text-2xl font-bold text-gray-700 mb-4">Arsip Struk</h2>
             <div id="archived-receipts-list" class="space-y-4">
-                <?php if (empty($archived_orders)): ?>
+                <?php if (empty($archived_orders)) : ?>
                     <p class="text-gray-500 no-archive-placeholder">Belum ada struk yang diarsipkan.</p>
-                    <?php else: foreach ($archived_orders as $order): ?>
+                    <?php else : foreach ($archived_orders as $order) : ?>
                         <?= generate_order_card($order, $cashier_name, $conn, true) ?>
                 <?php endforeach;
                 endif; ?>
@@ -335,21 +350,6 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
 // Fungsi untuk generate kartu pesanan agar tidak duplikat kode
 function generate_order_card($order, $cashier_name, $conn, $is_archived)
 {
-    // Lakukan kalkulasi ulang di sini untuk memastikan data di kartu dan struk akurat
-    $items_sql = "SELECT oi.quantity, m.price FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
-    $items_stmt = $conn->prepare($items_sql);
-    $items_stmt->bind_param("i", $order['id']);
-    $items_stmt->execute();
-    $items_result = $items_stmt->get_result();
-
-    $correct_subtotal = 0;
-    while ($item = $items_result->fetch_assoc()) {
-        $correct_subtotal += $item['quantity'] * $item['price'];
-    }
-
-    $correct_tax = $correct_subtotal * 0.11;
-    $correct_total = $correct_subtotal + $correct_tax;
-
     // Ambil detail transaksi (tunai & kembalian) jika metode pembayaran adalah cash
     $transaction_details = null;
     if ($order['payment_method'] === 'cash') {
@@ -372,8 +372,15 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 <?= $is_archived ? 'Dicetak pada: ' . date('d M Y, H:i', strtotime($order['receipt_printed_at'])) : 'Dibayar pada: ' . date('d M Y, H:i', strtotime($order['created_at'])) ?>
             </span>
         </div>
-        <?php if ($order['table_number']): ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
-        <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($correct_total, 0, ',', '.') ?></span></p>
+
+        <?php if (!empty($order['customer_name'])) : ?>
+            <p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p>
+        <?php elseif (!empty($order['member_name'])) : ?>
+            <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
+        <?php endif; ?>
+
+        <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+        <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
         <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
 
         <div class="print-area hidden" id="receipt-<?= $order['id'] ?>">
@@ -391,13 +398,24 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                     </tr>
                     <tr>
                         <td>Kasir</td>
-                        <td style="text-align: right;"><?= htmlspecialchars($order['user_name'] ?? $cashier_name) ?></td>
+                        <td style="text-align: right;"><?= htmlspecialchars($cashier_name) ?></td>
                     </tr>
                     <tr>
                         <td>Tanggal</td>
                         <td style="text-align: right;"><?= date('d/m/y H:i', strtotime($order['created_at'])) ?></td>
                     </tr>
-                    <?php if ($order['table_number']): ?><tr>
+                    <?php if (!empty($order['customer_name'])): ?>
+                        <tr>
+                            <td>Pemesan</td>
+                            <td style="text-align: right;"><?= htmlspecialchars($order['customer_name']) ?></td>
+                        </tr>
+                    <?php elseif (!empty($order['member_name'])): ?>
+                        <tr>
+                            <td>Member</td>
+                            <td style="text-align: right;"><?= htmlspecialchars($order['member_name']) ?></td>
+                        </tr>
+                    <?php endif; ?>
+                    <?php if ($order['table_number']) : ?><tr>
                             <td>Meja</td>
                             <td style="text-align: right;"><?= $order['table_number'] ?></td>
                         </tr><?php endif; ?>
@@ -405,12 +423,12 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
                 <table style="width: 100%; font-size: 11px;">
                     <?php
-                    $items_sql_print = "SELECT oi.quantity, m.name, m.price FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
+                    $items_sql_print = "SELECT oi.quantity, m.name, oi.price FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
                     $items_stmt_print = $conn->prepare($items_sql_print);
                     $items_stmt_print->bind_param("i", $order['id']);
                     $items_stmt_print->execute();
                     $items_result_print = $items_stmt_print->get_result();
-                    while ($item = $items_result_print->fetch_assoc()): ?>
+                    while ($item = $items_result_print->fetch_assoc()) : ?>
                         <tr>
                             <td colspan="2"><?= htmlspecialchars($item['name']) ?></td>
                         </tr>
@@ -424,20 +442,26 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 <table style="width: 100%; font-size: 11px;">
                     <tr>
                         <td>Subtotal</td>
-                        <td style="text-align: right;">Rp <?= number_format($correct_subtotal, 0, ',', '.') ?></td>
+                        <td style="text-align: right;">Rp <?= number_format($order['subtotal'], 0, ',', '.') ?></td>
                     </tr>
+                    <?php if ($order['discount_amount'] > 0): ?>
+                        <tr>
+                            <td>Diskon</td>
+                            <td style="text-align: right;">- Rp <?= number_format($order['discount_amount'], 0, ',', '.') ?></td>
+                        </tr>
+                    <?php endif; ?>
                     <tr>
                         <td>PPN (11%)</td>
-                        <td style="text-align: right;">Rp <?= number_format($correct_tax, 0, ',', '.') ?></td>
+                        <td style="text-align: right;">Rp <?= number_format($order['tax'], 0, ',', '.') ?></td>
                     </tr>
                 </table>
                 <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
                 <table style="width: 100%; font-size: 11px;">
                     <tr style="font-weight: bold; font-size: 12px;">
                         <td>TOTAL</td>
-                        <td style="text-align: right;">Rp <?= number_format($correct_total, 0, ',', '.') ?></td>
+                        <td style="text-align: right;">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></td>
                     </tr>
-                    <?php if ($transaction_details): ?>
+                    <?php if ($transaction_details) : ?>
                         <tr>
                             <td>TUNAI</td>
                             <td style="text-align: right;">Rp <?= number_format($transaction_details['amount_given'], 0, ',', '.') ?></td>
@@ -546,6 +570,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
             const {
                 items,
                 subtotal,
+                discount,
                 tax,
                 total_amount
             } = data;
@@ -560,6 +585,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
             tableHTML += `
             <div class="mt-2 pt-2 border-t text-sm">
                 <div class="flex justify-between py-1"><span>Subtotal</span><span>Rp ${formatRupiah(subtotal)}</span></div>
+                ${discount > 0 ? `<div class="flex justify-between py-1 text-green-600"><span>Diskon</span><span>- Rp ${formatRupiah(discount)}</span></div>` : ''}
                 <div class="flex justify-between py-1"><span>PPN (11%)</span><span>Rp ${formatRupiah(tax)}</span></div>
                 <div class="flex justify-between font-bold text-base mt-1 py-1 border-t border-gray-300"><span>Total Bayar</span><span>Rp ${formatRupiah(total_amount)}</span></div>
             </div>
@@ -631,13 +657,10 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
 
     // --- FUNGSI FORMAT RUPIAH (DIPERBARUI) ---
     function formatRupiah(angka) {
-        // Memastikan kita bekerja dengan tipe data number untuk pemformatan yang konsisten
         const number = Number(angka);
         if (isNaN(number)) {
             return '';
         }
-        // Menggunakan Intl.NumberFormat untuk cara yang modern dan andal
-        // Ini akan secara otomatis menangani pemisah ribuan (titik) sesuai standar Indonesia
         return new Intl.NumberFormat('id-ID').format(number);
     }
 </script>

@@ -9,30 +9,62 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
+// Cek status login user
+$is_logged_in = isset($_SESSION['user_id']);
+$user_name = $_SESSION['user_name'] ?? '';
+
 // Inisialisasi keranjang jika belum ada
 if (!isset($_SESSION['cart'])) {
     $_SESSION['cart'] = [];
 }
 
-// Handle GET request untuk data keranjang (AJAX)
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['is_ajax_get_cart'])) {
-    header('Content-Type: application/json');
+// --- FUNGSI PERHITUNGAN DISKON ---
+function calculate_discount($subtotal, $is_member)
+{
+    if (!$is_member || $subtotal <= 0) {
+        return 0;
+    }
 
+    $discount_percentage = 0;
+    if ($subtotal >= 200000) {
+        $discount_percentage = 0.15; // 15%
+    } elseif ($subtotal >= 100000) {
+        $discount_percentage = 0.10; // 10%
+    } elseif ($subtotal >= 50000) {
+        $discount_percentage = 0.05; // 5%
+    }
+
+    return $subtotal * $discount_percentage;
+}
+
+// --- FUNGSI UNTUK MENGAMBIL DATA KERANJANG TERBARU ---
+function get_cart_data($is_logged_in)
+{
     $cart = $_SESSION['cart'] ?? [];
     $subtotal = array_sum(array_map(function ($item) {
         return $item['price'] * $item['quantity'];
     }, $cart));
-    $ppn = $subtotal * 0.11; // PPN 11%
-    $total = $subtotal + $ppn;
+
+    $discount = calculate_discount($subtotal, $is_logged_in);
+    $subtotal_after_discount = $subtotal - $discount;
+    $ppn = $subtotal_after_discount * 0.11; // PPN 11% dari harga setelah diskon
+    $total = $subtotal_after_discount + $ppn;
     $cart_count = array_sum(array_column($cart, 'quantity'));
 
-    echo json_encode([
+    return [
         'cart_items' => array_values($cart),
         'cart_count' => $cart_count,
         'subtotal' => $subtotal,
+        'discount' => $discount,
         'ppn' => $ppn,
         'total' => $total,
-    ]);
+    ];
+}
+
+// Handle GET request untuk data keranjang (AJAX)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['is_ajax_get_cart'])) {
+    header('Content-Type: application/json');
+    echo json_encode(get_cart_data($is_logged_in));
     exit();
 }
 
@@ -116,25 +148,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
     }
 
     // Perbarui data keranjang dalam respons
-    $cart = $_SESSION['cart'];
-    $subtotal = array_sum(array_map(function ($item) {
-        return $item['price'] * $item['quantity'];
-    }, $cart));
-    $ppn = $subtotal * 0.11; // PPN 11%
-    $total = $subtotal + $ppn;
-
-    $response['cart_items'] = array_values($cart);
-    $response['cart_count'] = array_sum(array_column($cart, 'quantity'));
-    $response['subtotal'] = $subtotal;
-    $response['ppn'] = $ppn;
-    $response['total'] = $total;
-
+    $response = array_merge($response, get_cart_data($is_logged_in));
     echo json_encode($response);
     exit();
 }
 
 
-// Handle checkout (tetap dengan redirect karena akan pindah ke halaman lain)
+// Handle checkout
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'checkout') {
     $table_id = isset($_POST['table_id']) ? (int)$_POST['table_id'] : 1;
     if (empty($_SESSION['cart'])) {
@@ -142,30 +162,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit();
     }
 
+    // Validasi nama untuk guest
+    $customer_name = null;
+    if (!$is_logged_in) {
+        if (empty($_POST['customer_name'])) {
+            header("Location: index.php?table=$table_id&error=Nama+pemesan+harus+diisi");
+            exit();
+        }
+        $customer_name = trim($_POST['customer_name']);
+    }
+
+
     $payment_method = $_POST['payment_method'];
-    $subtotal = array_sum(array_map(function ($item) {
-        return $item['price'] * $item['quantity'];
-    }, $_SESSION['cart']));
-    $ppn = $subtotal * 0.11; // PPN 11%
-    $total = $subtotal + $ppn;
+    $cart_data = get_cart_data($is_logged_in);
+
+    $subtotal = $cart_data['subtotal'];
+    $discount = $cart_data['discount'];
+    $ppn = $cart_data['ppn'];
+    $total = $cart_data['total'];
     $order_type = 'dine-in';
-    $user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : null;
+    $user_id = $is_logged_in ? $_SESSION['user_id'] : null;
+
 
     $conn->begin_transaction();
     try {
         // Simpan pesanan
-        $sql = "INSERT INTO orders (table_id, user_id, order_type, status, subtotal, tax, total_amount, payment_method) VALUES (?, ?, ?, 'pending_payment', ?, ?, ?, ?)";
+        $sql = "INSERT INTO orders (table_id, user_id, customer_name, order_type, status, subtotal, discount_amount, tax, total_amount, payment_method) VALUES (?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iisddds", $table_id, $user_id, $order_type, $subtotal, $ppn, $total, $payment_method);
+        $stmt->bind_param("iisssddds", $table_id, $user_id, $customer_name, $order_type, $subtotal, $discount, $ppn, $total, $payment_method);
         $stmt->execute();
         $order_id = $stmt->insert_id;
 
         // Simpan item pesanan dan kurangi stok
         foreach ($_SESSION['cart'] as $item) {
             $sql = "INSERT INTO order_items (order_id, menu_id, quantity, price) VALUES (?, ?, ?, ?)";
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param("iiid", $order_id, $item['id'], $item['quantity'], $item['price']);
-            $stmt->execute();
+            $stmt_item = $conn->prepare($sql);
+            $stmt_item->bind_param("iiid", $order_id, $item['id'], $item['quantity'], $item['price']);
+            $stmt_item->execute();
 
             $sql_update_stock = "UPDATE menu SET stock = stock - ? WHERE id = ?";
             $stmt_update = $conn->prepare($sql_update_stock);
@@ -180,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit();
     } catch (Exception $e) {
         $conn->rollback();
-        // Sebaiknya log error ini
+        // Sebaiknya log error ini: error_log($e->getMessage());
         header("Location: index.php?table=$table_id&error=Gagal+membuat+pesanan");
         exit();
     }
@@ -199,7 +232,7 @@ $categories = [];
 foreach ($menu_items as $item) {
     $categories[$item['category']][] = $item;
 }
-$cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
+$cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
 ?>
 <!DOCTYPE html>
 <html lang="id" class="scroll-smooth">
@@ -230,8 +263,9 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
             transform: translate(-50%, 0);
         }
 
-        #cart-drawer {
-            transition: transform 0.3s ease-in-out;
+        #cart-drawer,
+        #loginModal {
+            transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
         }
 
         #cart-drawer.translate-x-full {
@@ -258,13 +292,23 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
             <h1 class="text-xl md:text-2xl font-extrabold text-gray-800">Cafe Bahagia</h1>
             <div class="flex items-center space-x-4">
                 <span class="bg-gray-100 text-gray-800 px-3 py-1.5 rounded-full font-semibold text-sm">Meja: <?= htmlspecialchars($table_id) ?></span>
-                <button id="loginButton" class="bg-blue-500 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-600 transition-colors text-sm">Login</button>
+                <div id="authButtonContainer">
+                    <?php if ($is_logged_in) : ?>
+                        <div class="flex items-center space-x-3">
+                            <span class="font-semibold text-green-600 text-sm hidden sm:block"><i class="fas fa-star mr-1"></i> Member</span>
+                            <span class="font-semibold text-gray-700 text-sm hidden sm:block">Hi, <?= htmlspecialchars(explode(' ', $user_name)[0]) ?>!</span>
+                            <a href="logout.php" class="bg-red-500 text-white px-4 py-2 rounded-full font-medium hover:bg-red-600 transition-colors text-sm">Logout</a>
+                        </div>
+                    <?php else : ?>
+                        <button id="loginButton" class="bg-blue-500 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-600 transition-colors text-sm">Login/Daftar</button>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
     </nav>
 
     <!-- Category Nav -->
-    <div id="category-nav" class="bg-white sticky top-[60px] z-40 shadow-sm">
+    <div id="category-nav" class="bg-white sticky top-[68px] z-30 shadow-sm">
         <div class="container mx-auto px-4">
             <div class="flex space-x-4 md:space-x-8 overflow-x-auto whitespace-nowrap -mb-px">
                 <?php foreach ($categories as $category => $items) : ?>
@@ -317,12 +361,12 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
     <!-- Cart Floating Action Button -->
     <button id="cartFab" class="fixed bottom-6 right-6 bg-green-500 text-white rounded-full shadow-lg w-16 h-16 flex items-center justify-center z-50 transform hover:scale-110 transition-transform">
         <i class="fas fa-shopping-cart text-2xl"></i>
-        <span id="cartBadgeFab" class="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-green-500"><?= $cart_count ?></span>
+        <span id="cartBadgeFab" class="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center border-2 border-green-500 <?= $cart_count == 0 ? 'hidden' : '' ?>"><?= $cart_count ?></span>
     </button>
 
     <!-- Cart Drawer -->
-    <div id="cart-backdrop" class="fixed inset-0 bg-black bg-opacity-60 hidden z-50"></div>
-    <div id="cart-drawer" class="fixed top-0 right-0 h-full w-full max-w-md bg-gray-100 shadow-2xl z-50 transform translate-x-full flex flex-col">
+    <div id="cart-backdrop" class="fixed inset-0 bg-black bg-opacity-60 hidden z-[60]"></div>
+    <div id="cart-drawer" class="fixed top-0 right-0 h-full w-full max-w-md bg-gray-100 shadow-2xl z-[70] transform translate-x-full flex flex-col">
         <div class="flex justify-between items-center p-5 border-b bg-white">
             <h2 class="text-xl font-bold text-gray-800">Keranjang Anda</h2>
             <button id="closeCartDrawer" class="text-gray-500 hover:text-gray-800"><i class="fas fa-times text-2xl"></i></button>
@@ -335,12 +379,22 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
             <p class="text-lg">Keranjang Anda kosong.</p>
         </div>
         <div id="cart-summary" class="p-5 border-t bg-white shadow-inner hidden">
-            <div class="space-y-2 mb-4">
-                <div class="flex justify-between font-medium text-gray-600"><span>Subtotal</span><span id="cart-subtotal"></span></div>
-                <div class="flex justify-between font-medium text-gray-600"><span>PPN (11%)</span><span id="cart-ppn"></span></div>
-                <div class="flex justify-between font-bold text-lg text-gray-900"><span>Total</span><span id="cart-total"></span></div>
-            </div>
             <form id="checkoutForm" method="POST">
+                <?php if (!$is_logged_in) : ?>
+                    <div class="mb-4">
+                        <label for="customer_name" class="block text-sm font-medium text-gray-700 mb-1">Nama Pemesan</label>
+                        <input type="text" id="customer_name" name="customer_name" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Masukkan nama Anda">
+                        <p class="text-xs text-gray-500 mt-1">Diperlukan agar kasir dapat memanggil nama Anda.</p>
+                    </div>
+                <?php endif; ?>
+
+                <div class="space-y-2 mb-4">
+                    <div class="flex justify-between font-medium text-gray-600"><span>Subtotal</span><span id="cart-subtotal"></span></div>
+                    <div id="discount-row" class="flex justify-between font-medium text-green-600 hidden"><span>Diskon Member</span><span id="cart-discount"></span></div>
+                    <div class="flex justify-between font-medium text-gray-600"><span>PPN (11%)</span><span id="cart-ppn"></span></div>
+                    <div class="flex justify-between font-bold text-lg text-gray-900 border-t pt-2 mt-2"><span>Total</span><span id="cart-total"></span></div>
+                </div>
+
                 <input type="hidden" name="action" value="checkout">
                 <input type="hidden" name="table_id" value="<?= $table_id ?>">
                 <h3 class="text-md font-semibold text-gray-800 mb-3">Metode Pembayaran</h3>
@@ -355,11 +409,62 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
         </div>
     </div>
 
-    <!-- Modals (Login, Payment Details) -->
-    <div id="loginModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 p-4">
-        <!-- Login modal content -->
+    <!-- Login/Register Modal -->
+    <div id="loginModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[80] opacity-0 pointer-events-none">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm m-4 relative transform scale-95 transition-transform duration-300">
+            <button id="closeLoginModal" class="absolute top-3 right-3 text-gray-400 hover:text-gray-800"><i class="fas fa-times text-2xl"></i></button>
+
+            <!-- Login Form -->
+            <div id="login-form-container" class="p-8">
+                <h2 class="text-2xl font-bold mb-1 text-center text-gray-800">Login Member</h2>
+                <p class="text-center text-gray-500 mb-6">Dapatkan diskon spesial untuk setiap pesanan!</p>
+                <div id="login-error" class="text-red-500 text-sm text-center mb-4"></div>
+                <form id="loginForm">
+                    <div class="mb-4">
+                        <label for="login_email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="login_email" name="email" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="mb-6">
+                        <label for="login_password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input type="password" id="login_password" name="password" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-md hover:bg-blue-700 transition-colors">Login</button>
+                </form>
+                <p class="text-center text-sm text-gray-600 mt-6">
+                    Belum punya akun? <a href="#" id="showRegister" class="font-semibold text-blue-600 hover:underline">Daftar di sini</a>
+                </p>
+            </div>
+
+            <!-- Register Form (hidden by default) -->
+            <div id="register-form-container" class="p-8 hidden">
+                <h2 class="text-2xl font-bold mb-1 text-center text-gray-800">Daftar Member Baru</h2>
+                <p class="text-center text-gray-500 mb-6">Gratis! Dapatkan diskon menarik sekarang juga.</p>
+                <div id="register-error" class="text-red-500 text-sm text-center mb-4"></div>
+                <div id="register-success" class="text-green-500 text-sm text-center mb-4"></div>
+                <form id="registerForm">
+                    <div class="mb-4">
+                        <label for="register_name" class="block text-sm font-medium text-gray-700 mb-1">Nama Lengkap</label>
+                        <input type="text" id="register_name" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="mb-4">
+                        <label for="register_email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="register_email" name="email" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div class="mb-6">
+                        <label for="register_password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input type="password" id="register_password" name="password" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-md hover:bg-blue-700 transition-colors">Daftar</button>
+                </form>
+                <p class="text-center text-sm text-gray-600 mt-6">
+                    Sudah punya akun? <a href="#" id="showLogin" class="font-semibold text-blue-600 hover:underline">Login di sini</a>
+                </p>
+            </div>
+        </div>
     </div>
-    <div id="paymentDetailsModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50 p-4">
+
+    <!-- Payment Details Modal -->
+    <div id="paymentDetailsModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-[80] p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 m-4 relative">
             <button id="closePaymentModal" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800"><i class="fas fa-times text-2xl"></i></button>
             <h2 class="text-xl font-bold mb-4 text-gray-800">Instruksi Pembayaran</h2>
@@ -369,6 +474,7 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // Element Constants
             const cartFab = document.getElementById('cartFab');
             const cartDrawer = document.getElementById('cart-drawer');
             const cartBackdrop = document.getElementById('cart-backdrop');
@@ -379,37 +485,134 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
             const emptyCartMessage = document.getElementById('empty-cart-message');
             const paymentDetailsModal = document.getElementById('paymentDetailsModal');
             const closePaymentModal = document.getElementById('closePaymentModal');
+            const authButtonContainer = document.getElementById('authButtonContainer');
+            const loginModal = document.getElementById('loginModal');
+            const closeLoginModal = document.getElementById('closeLoginModal');
+            const loginFormContainer = document.getElementById('login-form-container');
+            const registerFormContainer = document.getElementById('register-form-container');
+            const showRegister = document.getElementById('showRegister');
+            const showLogin = document.getElementById('showLogin');
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            const checkoutForm = document.getElementById('checkoutForm');
 
+            // --- Modal & Drawer Logic ---
             const toggleCartDrawer = (show) => {
                 cartDrawer.classList.toggle('translate-x-full', !show);
                 cartBackdrop.classList.toggle('hidden', !show);
             };
 
+            const toggleLoginModal = (show) => {
+                if (show) {
+                    loginModal.classList.remove('opacity-0', 'pointer-events-none');
+                    loginModal.querySelector('div').classList.remove('scale-95');
+                } else {
+                    loginModal.classList.add('opacity-0');
+                    loginModal.querySelector('div').classList.add('scale-95');
+                    setTimeout(() => loginModal.classList.add('pointer-events-none'), 300);
+                }
+            };
+
+            checkoutForm.addEventListener('submit', (e) => {
+                const customerNameInput = document.getElementById('customer_name');
+                if (customerNameInput && customerNameInput.value.trim() === '') {
+                    e.preventDefault();
+                    showToast('Nama pemesan tidak boleh kosong.', false);
+                    customerNameInput.focus();
+                }
+            });
+
+            authButtonContainer.addEventListener('click', (e) => {
+                if (e.target.id === 'loginButton') {
+                    toggleLoginModal(true);
+                }
+            });
+
+            closeLoginModal.addEventListener('click', () => toggleLoginModal(false));
             cartFab.addEventListener('click', () => {
                 updateCartData();
                 toggleCartDrawer(true);
             });
             closeCartDrawer.addEventListener('click', () => toggleCartDrawer(false));
-            cartBackdrop.addEventListener('click', () => toggleCartDrawer(false));
+            cartBackdrop.addEventListener('click', () => {
+                toggleCartDrawer(false);
+                toggleLoginModal(false);
+            });
 
             closePaymentModal.addEventListener('click', () => {
                 paymentDetailsModal.classList.add('hidden');
-                // Clean up URL after closing payment modal
+                // Clean up URL
                 const url = new URL(window.location.href);
                 url.searchParams.delete('payment_method');
                 url.searchParams.delete('total_amount');
                 window.history.replaceState({}, '', url);
             });
 
-            // Function to format currency
+            // --- Auth Form Logic ---
+            showRegister.addEventListener('click', (e) => {
+                e.preventDefault();
+                loginFormContainer.classList.add('hidden');
+                registerFormContainer.classList.remove('hidden');
+            });
+            showLogin.addEventListener('click', (e) => {
+                e.preventDefault();
+                registerFormContainer.classList.add('hidden');
+                loginFormContainer.classList.remove('hidden');
+            });
+
+            loginForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(loginForm);
+                const response = await fetch('login.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(result.message, true);
+                    toggleLoginModal(false);
+                    // Reload to update navbar and session state
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    document.getElementById('login-error').textContent = result.message;
+                }
+            });
+
+            registerForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(registerForm);
+                const response = await fetch('register.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                const registerError = document.getElementById('register-error');
+                const registerSuccess = document.getElementById('register-success');
+                registerError.textContent = '';
+                registerSuccess.textContent = '';
+
+                if (result.success) {
+                    registerSuccess.textContent = result.message;
+                    registerForm.reset();
+                    setTimeout(() => {
+                        registerFormContainer.classList.add('hidden');
+                        loginFormContainer.classList.remove('hidden');
+                        registerSuccess.textContent = '';
+                    }, 2000);
+                } else {
+                    registerError.textContent = result.message;
+                }
+            });
+
+            // --- Cart Logic ---
             const formatCurrency = (amount) => `Rp${Number(amount).toLocaleString('id-ID')}`;
 
-            // Handle adding items to cart
             document.querySelectorAll('.add-to-cart-form').forEach(form => {
                 form.addEventListener('submit', async (e) => {
                     e.preventDefault();
-                    const formData = new FormData(form);
-                    const response = await sendCartAction(formData);
+                    const response = await sendCartAction(new FormData(form));
                     if (response) {
                         showToast(response.message, response.success);
                         if (response.success) updateCartUI(response);
@@ -417,40 +620,24 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
                 });
             });
 
-            // Handle cart actions (update quantity, remove) via event delegation
-            cartContent.addEventListener('submit', async (e) => {
-                if (e.target.matches('.update-cart-form')) {
-                    e.preventDefault();
-                    const formData = new FormData(e.target);
-                    const response = await sendCartAction(formData);
-                    if (response && response.success) {
-                        updateCartUI(response);
-                        // No toast for simple quantity updates to avoid spam
-                    } else if (response) {
-                        showToast(response.message, false);
-                    }
-                }
-            });
-
             cartContent.addEventListener('click', async (e) => {
                 if (e.target.matches('.quantity-btn')) {
                     e.preventDefault();
                     const form = e.target.closest('form');
                     const quantityInput = form.querySelector('input[name="quantity"]');
-                    let quantity = parseInt(quantityInput.value);
-                    const change = parseInt(e.target.dataset.change);
-
-                    quantity += change;
-                    if (quantity < 0) quantity = 0; // Prevent negative numbers
-
+                    let quantity = parseInt(quantityInput.value) + parseInt(e.target.dataset.change);
+                    if (quantity < 0) quantity = 0;
                     quantityInput.value = quantity;
 
-                    const formData = new FormData(form);
-                    const response = await sendCartAction(formData);
-                    if (response && response.success) {
-                        updateCartUI(response);
-                    } else if (response) {
-                        showToast(response.message, false);
+                    const response = await sendCartAction(new FormData(form));
+                    if (response) {
+                        if (response.success) {
+                            updateCartUI(response);
+                        } else {
+                            showToast(response.message, false);
+                            // Revert quantity on stock error
+                            updateCartData();
+                        }
                     }
                 }
             });
@@ -504,7 +691,7 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
                             </div>
                             <input type="hidden" name="action" value="update_quantity">
                             <input type="hidden" name="menu_id" value="${item.id}">
-                             <input type="hidden" name="is_ajax" value="1">
+                            <input type="hidden" name="is_ajax" value="1">
                         </form>
                     </div>
                 `).join('');
@@ -512,6 +699,17 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
                     document.getElementById('cart-subtotal').textContent = formatCurrency(data.subtotal);
                     document.getElementById('cart-ppn').textContent = formatCurrency(data.ppn);
                     document.getElementById('cart-total').textContent = formatCurrency(data.total);
+
+                    // Handle discount display
+                    const discountRow = document.getElementById('discount-row');
+                    const discountEl = document.getElementById('cart-discount');
+                    if (data.discount > 0) {
+                        discountEl.textContent = `- ${formatCurrency(data.discount)}`;
+                        discountRow.classList.remove('hidden');
+                    } else {
+                        discountRow.classList.add('hidden');
+                    }
+
                 } else {
                     cartContent.innerHTML = '';
                     emptyCartMessage.classList.remove('hidden');
@@ -535,15 +733,16 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
                 }, 2500);
             }
 
-            // Check for payment details on page load
+            // --- Page Load Actions ---
             const urlParams = new URLSearchParams(window.location.search);
-            const paymentMethod = urlParams.get('payment_method');
-            const totalAmount = urlParams.get('total_amount');
-            if (paymentMethod && totalAmount) {
-                displayPaymentDetails(paymentMethod, totalAmount);
+            if (urlParams.get('payment_method') && urlParams.get('total_amount')) {
+                displayPaymentDetails(urlParams.get('payment_method'), urlParams.get('total_amount'));
             }
             if (urlParams.has('error')) {
                 showToast(urlParams.get('error'), false);
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.searchParams.delete('error');
+                window.history.replaceState({}, '', cleanUrl);
             }
 
             function displayPaymentDetails(method, total) {
@@ -551,16 +750,16 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
                 let contentHTML = '';
                 switch (method) {
                     case 'cash':
-                        contentHTML = `<p>Silakan ke kasir, sebutkan nomor meja <b>(Meja: ${<?= $table_id ?>})</b> dan bayar sejumlah <b>${formattedTotal}</b>.</p>`;
+                        contentHTML = `<p>Silakan ke kasir, sebutkan nomor meja <b>(Meja: ${<?= $table_id ?>})</b> dan bayar sejumlah <b>${formattedTotal}</b>.</p><p class="mt-4 text-sm text-center text-gray-500">Terima kasih atas pesanan Anda!</p>`;
                         break;
                     case 'QRIS':
-                        contentHTML = `<p>Scan QRIS di bawah ini dan bayar sejumlah <b>${formattedTotal}</b>.</p><img src="https://placehold.co/300x300/eee/000?text=QRIS" class="mx-auto my-4">`;
+                        contentHTML = `<p>Scan QRIS di bawah ini dan bayar sejumlah <b>${formattedTotal}</b>.</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=ContohDataQRIS" class="mx-auto my-4 rounded-lg">`;
                         break;
                     case 'transfer':
-                        contentHTML = `<p>Transfer sejumlah <b>${formattedTotal}</b> ke:<br>BCA: 123456789 (a/n Cafe Bahagia)</p>`;
+                        contentHTML = `<p>Transfer sejumlah <b>${formattedTotal}</b> ke:<br><b class="text-lg">BCA: 123456789</b><br>(a/n Cafe Bahagia)</p>`;
                         break;
                     case 'virtual_account':
-                        contentHTML = `<p>Bayar sejumlah <b>${formattedTotal}</b> ke VA berikut:<br>VA: 901234567890 (a/n Cafe Bahagia)</p>`;
+                        contentHTML = `<p>Bayar sejumlah <b>${formattedTotal}</b> ke VA berikut:<br><b class="text-lg">VA: 901234567890</b><br>(a/n Cafe Bahagia)</p>`;
                         break;
                 }
                 document.getElementById('payment-content').innerHTML = contentHTML;
@@ -568,13 +767,10 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
             }
 
             // Sticky category nav active state handler
-            const categoryNav = document.getElementById('category-nav');
-            const navItems = categoryNav.querySelectorAll('.category-nav-item');
-            const sections = document.querySelectorAll('section[id^="category-"]');
             const observer = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
-                        navItems.forEach(nav => {
+                        document.querySelectorAll('.category-nav-item').forEach(nav => {
                             nav.classList.toggle('active', nav.getAttribute('href').substring(1) === entry.target.id);
                         });
                     }
@@ -583,7 +779,10 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'quantity'));
                 rootMargin: "-100px 0px -50% 0px",
                 threshold: 0
             });
-            sections.forEach(sec => observer.observe(sec));
+            document.querySelectorAll('section[id^="category-"]').forEach(sec => observer.observe(sec));
+
+            // Initial cart load for display
+            updateCartData();
         });
     </script>
 </body>
