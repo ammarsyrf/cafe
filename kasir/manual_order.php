@@ -49,21 +49,13 @@ foreach ($menu_items as $item) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action']) && $_POST['action'] === 'create_manual_order') {
         $order_type = $_POST['order_type'];
+        $customer_name = !empty($_POST['customer_name']) ? trim($_POST['customer_name']) : 'Guest';
         $table_number = $_POST['table_number'] ? (int)$_POST['table_number'] : NULL;
         $items = json_decode($_POST['items_json'], true);
         $total_amount = (float)$_POST['total_amount'];
-        $payment_method = $_POST['payment_method'];
 
-        $amount_given = 0;
-        $change_amount = 0;
-
-        if ($payment_method === 'manual_cash') {
-            $amount_given = (float)str_replace('.', '', $_POST['amount_given']);
-            $change_amount = $amount_given - $total_amount;
-        } else {
-            $amount_given = $total_amount;
-            $change_amount = 0;
-        }
+        $amount_given = (float)str_replace('.', '', $_POST['amount_given']);
+        $change_amount = $amount_given - $total_amount;
 
         $subtotal = 0;
         foreach ($items as $item_data) {
@@ -83,12 +75,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $status = ($payment_method === 'manual_cash') ? 'completed' : 'paid';
-        $actual_payment_method = ($payment_method === 'manual_cash') ? 'cash' : $payment_method;
+        // PENJELASAN: Untuk pesanan manual, status langsung 'completed' (selesai)
+        // dan metode pembayaran adalah 'manual_cash' (tunai manual).
+        $status = 'completed';
+        $payment_method = 'manual_cash';
 
-        $sql_insert_order = "INSERT INTO orders (user_id, table_id, order_type, subtotal, tax, total_amount, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        // PERBAIKAN: Menambahkan cashier_id untuk mencatat siapa yang memproses pesanan manual
+        $sql_insert_order = "INSERT INTO orders (user_id, cashier_id, table_id, order_type, customer_name, subtotal, tax, total_amount, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt_insert_order = $conn->prepare($sql_insert_order);
-        $stmt_insert_order->bind_param("iisdddss", $kasir_id, $table_id, $order_type, $subtotal, $tax, $total_amount, $actual_payment_method, $status);
+
+        // PERBAIKAN KRUSIAL: Tipe data pada bind_param disesuaikan agar cocok dengan variabel (iiissdddss)
+        // Sebelumnya: "iiisssddds" -> salah, menyebabkan error dan data tidak tersimpan
+        $stmt_insert_order->bind_param("iiissdddss", $kasir_id, $kasir_id, $table_id, $order_type, $customer_name, $subtotal, $tax, $total_amount, $payment_method, $status);
         $stmt_insert_order->execute();
         $order_id = $conn->insert_id;
 
@@ -101,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $sql_insert_trans = "INSERT INTO transactions (order_id, total_paid, amount_given, change_amount, payment_method) VALUES (?, ?, ?, ?, ?)";
         $stmt_insert_trans = $conn->prepare($sql_insert_trans);
-        $stmt_insert_trans->bind_param("iddds", $order_id, $total_amount, $amount_given, $change_amount, $actual_payment_method);
+        $stmt_insert_trans->bind_param("iddds", $order_id, $total_amount, $amount_given, $change_amount, $payment_method);
         $stmt_insert_trans->execute();
 
         header("Location: kasir.php?message=Pesanan+manual+berhasil+dibuat");
@@ -252,6 +250,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                             <div class="p-6 space-y-4 flex-1">
                                 <input type="hidden" name="action" value="create_manual_order">
+
+                                <div>
+                                    <label for="customer-name" class="block text-sm font-medium text-gray-700 mb-1">Nama Pemesan</label>
+                                    <input type="text" name="customer_name" id="customer-name" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="Contoh: Budi" required>
+                                </div>
+
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 mb-1">Jenis Pesanan</label>
                                     <select name="order_type" id="order-type" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
@@ -259,9 +263,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <option value="take-away">Take Away</option>
                                     </select>
                                 </div>
+
                                 <div id="table-number-group">
                                     <label class="block text-sm font-medium text-gray-700 mb-1">Nomor Meja</label>
-                                    <input type="number" name="table_number" id="table-number" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" required>
+                                    <input type="number" name="table_number" id="table-number" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="Contoh: 12" required>
                                 </div>
                             </div>
 
@@ -281,19 +286,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
 
                             <div class="p-6">
-                                <h3 class="font-bold text-lg mb-2">Metode Pembayaran</h3>
-                                <select name="payment_method" id="payment-method-select" class="block w-full rounded-md border-gray-300 shadow-sm mb-4 focus:border-blue-500 focus:ring-blue-500">
-                                    <option value="manual_cash">Tunai</option>
-                                    <option value="qris">QRIS</option>
-                                </select>
+                                <h3 class="font-bold text-lg mb-2">Pembayaran Tunai</h3>
                                 <div id="cash-payment-fields" class="space-y-2">
                                     <label class="block text-sm font-medium text-gray-700">Uang Diberikan (Rp)</label>
                                     <input type="text" name="amount_given" id="amount-given" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-lg" required placeholder="0">
                                     <div class="text-lg font-bold flex justify-between"><span>Kembalian:</span><span id="change-amount">Rp 0</span></div>
-                                </div>
-                                <div id="qris-payment-field" class="hidden text-center">
-                                    <p class="text-sm text-gray-600 mb-2">Konfirmasi setelah pelanggan scan QRIS.</p>
-                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=Example" alt="QRIS Code" class="mx-auto rounded-lg">
                                 </div>
                             </div>
 
@@ -324,10 +321,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const tableNumberInput = document.getElementById('table-number');
             const manualOrderForm = document.getElementById('manual-order-form');
             const itemsJsonInput = document.getElementById('items-json-input');
-            const paymentMethodSelect = document.getElementById('payment-method-select');
-            const cashPaymentFields = document.getElementById('cash-payment-fields');
-            const qrisPaymentField = document.getElementById('qris-payment-field');
             const processButton = document.getElementById('process-manual-payment');
+            const customerNameInput = document.getElementById('customer-name');
 
             // --- Sidebar ---
             const sidebar = document.getElementById('sidebar');
@@ -345,7 +340,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             menuButton.addEventListener('click', openSidebar);
             sidebarOverlay.addEventListener('click', closeSidebar);
-
 
             let orderItems = {}; // { id: {id, name, price, quantity} }
             const TAX_RATE = 0.11;
@@ -370,11 +364,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const updateOrderSummary = () => {
                 let subtotal = 0;
                 const hasItems = Object.keys(orderItems).length > 0;
-
                 emptyOrderMessage.classList.toggle('hidden', hasItems);
                 processButton.disabled = !hasItems;
-
-                // Hapus item lama sebelum render ulang
                 orderSummaryList.querySelectorAll('.summary-item').forEach(el => el.remove());
 
                 for (const id in orderItems) {
@@ -382,28 +373,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     const itemElement = document.createElement('div');
                     itemElement.className = 'summary-item flex justify-between items-center bg-white p-3 rounded-lg shadow-sm summary-item-enter';
                     itemElement.innerHTML = `
-                    <div class="flex-grow pr-2">
-                        <p class="font-medium text-gray-800 text-sm">${item.name}</p>
-                        <p class="text-xs text-gray-500">Rp ${formatRupiah(item.price)}</p>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                        <button type="button" class="quantity-button bg-red-100 text-red-600 w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors" data-id="${id}" data-action="subtract"><i class="fas fa-minus text-xs"></i></button>
-                        <span class="font-bold w-6 text-center">${item.quantity}</span>
-                        <button type="button" class="quantity-button bg-green-100 text-green-600 w-6 h-6 rounded-full flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors" data-id="${id}" data-action="add"><i class="fas fa-plus text-xs"></i></button>
-                    </div>`;
+                        <div class="flex-grow pr-2">
+                            <p class="font-medium text-gray-800 text-sm">${item.name}</p>
+                            <p class="text-xs text-gray-500">Rp ${formatRupiah(item.price)}</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button type="button" class="quantity-button bg-red-100 text-red-600 w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors" data-id="${id}" data-action="subtract"><i class="fas fa-minus text-xs"></i></button>
+                            <span class="font-bold w-6 text-center">${item.quantity}</span>
+                            <button type="button" class="quantity-button bg-green-100 text-green-600 w-6 h-6 rounded-full flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors" data-id="${id}" data-action="add"><i class="fas fa-plus text-xs"></i></button>
+                        </div>`;
                     orderSummaryList.appendChild(itemElement);
                     subtotal += item.quantity * item.price;
                 }
 
                 const tax = subtotal * TAX_RATE;
                 const total = subtotal + tax;
-
                 manualSubtotalSpan.textContent = `Rp ${formatRupiah(subtotal)}`;
                 manualTaxSpan.textContent = `Rp ${formatRupiah(tax)}`;
                 manualTotalSpan.textContent = `Rp ${formatRupiah(total)}`;
                 totalAmountHiddenInput.value = total;
-
-                if (paymentMethodSelect.value === 'manual_cash') updateChange();
+                updateChange();
             };
 
             const updateChange = () => {
@@ -422,7 +411,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     name,
                     price
                 } = card.dataset;
-
                 if (orderItems[id]) {
                     orderItems[id].quantity++;
                 } else {
@@ -443,7 +431,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     id,
                     action
                 } = button.dataset;
-
                 if (action === 'add') {
                     orderItems[id].quantity++;
                 } else if (action === 'subtract') {
@@ -461,16 +448,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             orderTypeSelect.addEventListener('change', (e) => {
                 const isDineIn = e.target.value === 'dine-in';
-                tableNumberGroup.classList.toggle('hidden', !isDineIn);
+                tableNumberGroup.style.display = isDineIn ? 'block' : 'none';
                 tableNumberInput.required = isDineIn;
                 if (!isDineIn) tableNumberInput.value = '';
-            });
-
-            paymentMethodSelect.addEventListener('change', (e) => {
-                const isCash = e.target.value === 'manual_cash';
-                cashPaymentFields.classList.toggle('hidden', !isCash);
-                qrisPaymentField.classList.toggle('hidden', isCash);
-                amountGivenInput.required = isCash;
             });
 
             manualOrderForm.addEventListener('submit', (e) => {
@@ -479,20 +459,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     showMessage("Pilih setidaknya satu item menu.", true);
                     return;
                 }
+                if (!customerNameInput.value.trim()) {
+                    e.preventDefault();
+                    showMessage("Silakan masukkan nama pemesan.", true);
+                    return;
+                }
                 if (orderTypeSelect.value === 'dine-in' && !tableNumberInput.value) {
                     e.preventDefault();
                     showMessage("Silakan pilih nomor meja untuk pesanan Dine In.", true);
                     return;
                 }
 
-                if (paymentMethodSelect.value === 'manual_cash') {
-                    const total = parseFloat(totalAmountHiddenInput.value);
-                    const amountGiven = parseFloat(amountGivenInput.value.replace(/\D/g, '')) || 0;
-                    if (amountGiven < total) {
-                        e.preventDefault();
-                        showMessage("Uang yang diberikan kurang dari total pesanan.", true);
-                        return;
-                    }
+                const total = parseFloat(totalAmountHiddenInput.value);
+                const amountGiven = parseFloat(amountGivenInput.value.replace(/\D/g, '')) || 0;
+                if (amountGiven < total) {
+                    e.preventDefault();
+                    showMessage("Uang yang diberikan kurang dari total pesanan.", true);
+                    return;
                 }
 
                 itemsJsonInput.value = JSON.stringify(Object.values(orderItems));
@@ -501,7 +484,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // --- Inisialisasi ---
             updateOrderSummary();
             orderTypeSelect.dispatchEvent(new Event('change'));
-            paymentMethodSelect.dispatchEvent(new Event('change'));
         });
     </script>
 </body>

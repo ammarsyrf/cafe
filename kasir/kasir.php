@@ -1,5 +1,14 @@
 <?php
-// File: kasir.php
+// =========================================================================
+//  BAGIAN KONFIGURASI DAN INISIALISASI
+// =========================================================================
+
+// [PERBAIKAN 1: MENGATASI LOGOUT OTOMATIS]
+// Menaikkan batas waktu sesi menjadi 8 jam (28800 detik).
+// Default PHP seringkali hanya 24 menit.
+// Letakkan ini SEBELUM session_start().
+ini_set('session.gc_maxlifetime', 28800);
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -25,15 +34,16 @@ if (isset($_GET['ajax'])) {
     // --- Endpoint untuk mengambil detail item pesanan ---
     if ($_GET['action'] === 'get_order_details' && isset($_GET['order_id'])) {
         $order_id = (int)$_GET['order_id'];
-
-        // Ambil info dasar pesanan
-        $sql_order = "SELECT subtotal, discount_amount, tax, total_amount FROM orders WHERE id = ?";
+        // [PERBAIKAN] Tambahkan JOIN untuk mengambil nomor meja
+        $sql_order = "SELECT o.subtotal, o.discount_amount, o.tax, o.total_amount, t.table_number 
+                      FROM orders o 
+                      LEFT JOIN tables t ON o.table_id = t.id 
+                      WHERE o.id = ?";
         $stmt_order = $conn->prepare($sql_order);
         $stmt_order->bind_param("i", $order_id);
         $stmt_order->execute();
         $order_data = $stmt_order->get_result()->fetch_assoc();
 
-        // Ambil item pesanan
         $sql_items = "SELECT m.name, oi.quantity, oi.price FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
         $stmt_items = $conn->prepare($sql_items);
         $stmt_items->bind_param("i", $order_id);
@@ -41,19 +51,139 @@ if (isset($_GET['ajax'])) {
         $result_items = $stmt_items->get_result();
         $items = [];
         while ($row = $result_items->fetch_assoc()) {
+            // [PERBAIKAN] Casting tipe data untuk memastikan format angka yang benar di JSON
+            $row['price'] = (float)$row['price'];
+            $row['quantity'] = (int)$row['quantity'];
             $items[] = $row;
         }
 
         $response_data = [
             'items' => $items,
-            'subtotal' => $order_data['subtotal'],
-            'discount' => $order_data['discount_amount'],
-            'tax' => $order_data['tax'],
-            'total_amount' => $order_data['total_amount']
+            // [PERBAIKAN] Casting tipe data untuk memastikan format angka yang benar di JSON
+            'subtotal' => (float)$order_data['subtotal'],
+            'discount' => (float)$order_data['discount_amount'],
+            'tax' => (float)$order_data['tax'],
+            'total_amount' => (float)$order_data['total_amount'],
+            'table_number' => $order_data['table_number'] // [PENAMBAHAN] Kirim nomor meja ke frontend
         ];
-
         $response = ['success' => true, 'data' => $response_data];
     }
+
+    // [PENAMBAHAN: Endpoint untuk REAL-TIME UPDATE]
+    // Endpoint baru untuk mengambil semua daftar pesanan dalam format HTML
+    if ($_GET['action'] === 'get_latest_orders') {
+        // Query dasar yang sama dengan di halaman utama
+        $base_select = "SELECT o.*, t.table_number, u.name AS member_name, c.name AS cashier_processor_name FROM orders o LEFT JOIN tables t ON o.table_id = t.id LEFT JOIN members u ON o.user_id = u.id LEFT JOIN users c ON o.cashier_id = c.id";
+
+        // 1. Pending Orders (Tunai)
+        $pending_html = '';
+        $sql_pending = "$base_select WHERE o.status = 'pending_payment' AND o.payment_method = 'cash' ORDER BY o.created_at DESC";
+        $result_pending = $conn->query($sql_pending);
+        if ($result_pending && $result_pending->num_rows > 0) {
+            while ($order = $result_pending->fetch_assoc()) {
+                ob_start(); // Mulai buffer output
+?>
+                <div class="bg-yellow-50 p-4 rounded-lg shadow-sm border border-yellow-200">
+                    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-baseline gap-2 mb-3">
+                        <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
+                        <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
+                    </div>
+                    <?php if (!empty($order['customer_name'])) : ?>
+                        <p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p>
+                    <?php elseif (!empty($order['member_name'])) : ?>
+                        <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
+                    <?php endif; ?>
+                    <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+                    <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
+                    <form method="POST" action="kasir.php">
+                        <input type="hidden" name="action" value="process_cash_payment">
+                        <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
+                        <input type="hidden" name="total_amount" value="<?= $order['total_amount'] ?>">
+                        <div class="flex flex-col md:flex-row gap-4 items-start md:items-end">
+                            <div class="w-full md:w-1/2"><label for="amount-given-<?= $order['id'] ?>" class="block text-sm font-medium text-gray-700 mb-1">Uang Diberikan (Rp)</label><input type="text" id="amount-given-<?= $order['id'] ?>" name="amount_given" class="w-full p-2 border border-gray-300 rounded-md shadow-sm" required placeholder="Contoh: 50000"></div>
+                            <div class="w-full md:w-1/2">
+                                <p class="text-sm font-medium text-gray-700">Kembalian: <span id="change-amount-<?= $order['id'] ?>" class="font-bold text-green-600">Rp 0</span></p>
+                            </div>
+                            <div class="w-full md:w-auto"><button type="submit" class="w-full bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 font-semibold"><i class="fas fa-check-circle mr-2"></i>Proses</button></div>
+                        </div>
+                    </form>
+                </div>
+            <?php
+                $pending_html .= ob_get_clean(); // Ambil konten dan bersihkan buffer
+            }
+        } else {
+            $pending_html = '<p class="text-gray-500">Tidak ada pesanan yang menunggu pembayaran tunai.</p>';
+        }
+
+        // 2. Non-Cash Orders
+        $non_cash_html = '';
+        $sql_non_cash = "$base_select WHERE o.status = 'pending_payment' AND o.payment_method IN ('qris', 'transfer', 'virtual_account') ORDER BY o.created_at DESC";
+        $result_non_cash = $conn->query($sql_non_cash);
+        if ($result_non_cash && $result_non_cash->num_rows > 0) {
+            while ($order = $result_non_cash->fetch_assoc()) {
+                ob_start();
+            ?>
+                <div class="bg-purple-50 p-4 rounded-lg shadow-sm border border-purple-200">
+                    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-baseline gap-2 mb-2">
+                        <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
+                        <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
+                    </div>
+                    <?php if (!empty($order['customer_name'])) : ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])) : ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
+                    <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+                    <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
+                    <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <button data-orderid="<?= $order['id'] ?>" class="view-details-btn bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors text-sm"><i class="fas fa-eye mr-2"></i>Lihat Detail</button>
+                        <form method="POST" action="kasir.php" class="inline-block">
+                            <input type="hidden" name="action" value="confirm_non_cash_payment">
+                            <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
+                            <button type="submit" class="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors text-sm font-semibold"><i class="fas fa-check mr-2"></i>Konfirmasi Pembayaran</button>
+                        </form>
+                    </div>
+                    <div id="details-for-<?= $order['id'] ?>" class="details-container mt-4 pt-4 border-t border-purple-200"></div>
+                </div>
+<?php
+                $non_cash_html .= ob_get_clean();
+            }
+        } else {
+            $non_cash_html = '<p class="text-gray-500">Tidak ada pesanan non-tunai yang menunggu konfirmasi.</p>';
+        }
+
+        // 3. Paid Orders (Siap Cetak)
+        $paid_html = '';
+        $sql_paid = "$base_select WHERE o.status = 'completed' AND o.receipt_printed_at IS NULL ORDER BY o.created_at DESC";
+        $result_paid = $conn->query($sql_paid);
+        if ($result_paid && $result_paid->num_rows > 0) {
+            while ($order = $result_paid->fetch_assoc()) {
+                $paid_html .= generate_order_card($order, $cashier_name, $conn, false);
+            }
+        } else {
+            $paid_html = '<p class="text-gray-500 no-paid-placeholder">Tidak ada pesanan yang perlu dicetak struknya.</p>';
+        }
+
+        // 4. Archived Orders
+        $archived_html = '';
+        $sql_archived = "$base_select WHERE o.status = 'completed' AND o.receipt_printed_at IS NOT NULL ORDER BY o.receipt_printed_at DESC";
+        $result_archived = $conn->query($sql_archived);
+        if ($result_archived && $result_archived->num_rows > 0) {
+            while ($order = $result_archived->fetch_assoc()) {
+                $archived_html .= generate_order_card($order, $cashier_name, $conn, true);
+            }
+        } else {
+            $archived_html = '<p class="text-gray-500 no-archive-placeholder">Belum ada struk yang diarsipkan.</p>';
+        }
+
+        $response = [
+            'success' => true,
+            'data' => [
+                'pending_html' => $pending_html,
+                'non_cash_html' => $non_cash_html,
+                'paid_html' => $paid_html,
+                'archived_html' => $archived_html
+            ]
+        ];
+    }
+
 
     echo json_encode($response);
     exit();
@@ -80,8 +210,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // --- Endpoint untuk konfirmasi pembayaran non-tunai ---
     if (isset($_POST['action']) && $_POST['action'] === 'confirm_non_cash_payment') {
         $order_id = (int)$_POST['order_id'];
-        // Update status menjadi 'completed' dan catat kasir yang memproses
-        $sql = "UPDATE orders SET status = 'completed', user_id = ? WHERE id = ?";
+        $sql = "UPDATE orders SET status = 'completed', cashier_id = ? WHERE id = ?";
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("ii", $cashier_id, $order_id);
         if ($stmt->execute()) {
@@ -93,7 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
 
-    // --- Proses Pembayaran Tunai (Logic Lama) ---
+    // --- Proses Pembayaran Tunai ---
     if (isset($_POST['action']) && $_POST['action'] === 'process_cash_payment') {
         $order_id = (int)$_POST['order_id'];
         $amount_given = (float)str_replace('.', '', $_POST['amount_given']);
@@ -105,7 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit();
         }
 
-        $sql_update_order = "UPDATE orders SET status = 'completed', user_id = ? WHERE id = ?";
+        $sql_update_order = "UPDATE orders SET status = 'completed', cashier_id = ? WHERE id = ?";
         $stmt_update_order = $conn->prepare($sql_update_order);
         $stmt_update_order->bind_param("ii", $cashier_id, $order_id);
         $stmt_update_order->execute();
@@ -124,10 +253,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =========================================================================
 //  LOGIC BAGIAN C: Mengambil data untuk Tampilan Halaman
 // =========================================================================
-$base_select = "SELECT o.*, t.table_number, u.name AS member_name 
+$base_select = "SELECT 
+                    o.*, 
+                    t.table_number, 
+                    u.name AS member_name,
+                    c.name AS cashier_processor_name
                 FROM orders o 
                 LEFT JOIN tables t ON o.table_id = t.id 
-                LEFT JOIN users u ON o.user_id = u.id";
+                LEFT JOIN members u ON o.user_id = u.id
+                LEFT JOIN users c ON o.cashier_id = c.id";
 
 // 1. Pesanan menunggu pembayaran tunai
 $pending_orders = [];
@@ -363,6 +497,8 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
         }
     }
 
+    $display_cashier_name = $order['cashier_processor_name'] ?? $cashier_name;
+
     ob_start();
 ?>
     <div id="order-card-<?= $order['id'] ?>" class="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200">
@@ -398,7 +534,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                     </tr>
                     <tr>
                         <td>Kasir</td>
-                        <td style="text-align: right;"><?= htmlspecialchars($cashier_name) ?></td>
+                        <td style="text-align: right;"><?= htmlspecialchars($display_cashier_name) ?></td>
                     </tr>
                     <tr>
                         <td>Tanggal</td>
@@ -514,26 +650,38 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
             }, 4000);
         });
 
-        // --- SCRIPT KALKULASI KEMBALIAN ---
-        document.querySelectorAll('input[id^="amount-given-"]').forEach(input => {
-            const form = input.closest('form');
-            if (!form) return;
-            const totalAmount = parseFloat(form.querySelector('input[name="total_amount"]').value);
-            const orderId = form.querySelector('input[name="order_id"]').value;
-            const changeAmountEl = document.getElementById(`change-amount-${orderId}`);
-            if (!changeAmountEl) return;
-            input.addEventListener('input', (e) => {
-                let value = e.target.value.replace(/\D/g, '');
-                const amountGiven = parseFloat(value) || 0;
-                const change = amountGiven - totalAmount;
-                changeAmountEl.textContent = `Rp ${change >= 0 ? formatRupiah(change) : '0'}`;
-                changeAmountEl.classList.toggle('text-red-600', change < 0);
-                changeAmountEl.classList.toggle('text-green-600', change >= 0);
-                e.target.value = formatRupiah(value);
-            });
-        });
+        // [MODIFIKASI] Memisahkan event listener agar bisa dipanggil ulang
+        function initializeChangeCalculation() {
+            document.querySelectorAll('input[id^="amount-given-"]').forEach(input => {
+                // Mencegah listener ganda
+                if (input.hasAttribute('data-listener-attached')) return;
 
-        // --- SCRIPT BARU UNTUK DETAIL INLINE (AKORDEON) ---
+                const form = input.closest('form');
+                if (!form) return;
+                const totalAmount = parseFloat(form.querySelector('input[name="total_amount"]').value);
+                const orderId = form.querySelector('input[name="order_id"]').value;
+                const changeAmountEl = document.getElementById(`change-amount-${orderId}`);
+                if (!changeAmountEl) return;
+
+                const inputHandler = (e) => {
+                    let value = e.target.value.replace(/\D/g, '');
+                    const amountGiven = parseFloat(value) || 0;
+                    const change = amountGiven - totalAmount;
+                    changeAmountEl.textContent = `Rp ${change >= 0 ? formatRupiah(change) : '0'}`;
+                    changeAmountEl.classList.toggle('text-red-600', change < 0);
+                    changeAmountEl.classList.toggle('text-green-600', change >= 0);
+                    e.target.value = formatRupiah(value);
+                };
+
+                input.addEventListener('input', inputHandler);
+                input.setAttribute('data-listener-attached', 'true');
+            });
+        }
+
+        // Panggil saat halaman pertama kali dimuat
+        initializeChangeCalculation();
+
+        // --- SCRIPT DETAIL INLINE (AKORDEON) ---
         document.body.addEventListener('click', async (e) => {
             const detailsButton = e.target.closest('.view-details-btn');
             if (detailsButton) {
@@ -572,8 +720,15 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 subtotal,
                 discount,
                 tax,
-                total_amount
+                total_amount,
+                table_number // [PENAMBAHAN] Ambil data nomor meja
             } = data;
+
+            // [PENAMBAHAN] Buat HTML untuk info tambahan seperti nomor meja
+            let infoHTML = '';
+            if (table_number) {
+                infoHTML += `<div class="mb-2 text-sm"><span class="font-semibold text-gray-700">Meja:</span> ${table_number}</div>`;
+            }
 
             let tableHTML = `<table class="min-w-full text-sm"><thead class="bg-gray-100"><tr><th class="p-2 text-left font-semibold text-gray-600">Item</th><th class="p-2 text-center font-semibold text-gray-600">Jml</th><th class="p-2 text-right font-semibold text-gray-600">Subtotal</th></tr></thead><tbody class="divide-y">`;
             items.forEach(item => {
@@ -581,21 +736,42 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 tableHTML += `<tr><td class="p-2">${item.name} <br> <span class="text-xs text-gray-500">${item.quantity} x ${formatRupiah(item.price)}</span></td><td class="p-2 text-center">${item.quantity}</td><td class="p-2 text-right">${formatRupiah(itemSubtotal)}</td></tr>`;
             });
             tableHTML += `</tbody></table>`;
-
             tableHTML += `
             <div class="mt-2 pt-2 border-t text-sm">
                 <div class="flex justify-between py-1"><span>Subtotal</span><span>Rp ${formatRupiah(subtotal)}</span></div>
                 ${discount > 0 ? `<div class="flex justify-between py-1 text-green-600"><span>Diskon</span><span>- Rp ${formatRupiah(discount)}</span></div>` : ''}
                 <div class="flex justify-between py-1"><span>PPN (11%)</span><span>Rp ${formatRupiah(tax)}</span></div>
                 <div class="flex justify-between font-bold text-base mt-1 py-1 border-t border-gray-300"><span>Total Bayar</span><span>Rp ${formatRupiah(total_amount)}</span></div>
-            </div>
-        `;
+            </div>`;
 
-            container.innerHTML = tableHTML;
+            // [PERBAIKAN] Gabungkan info tambahan dengan tabel item
+            container.innerHTML = infoHTML + tableHTML;
         }
+
+        // [PENAMBAHAN: SCRIPT REAL-TIME UPDATE]
+        async function fetchLatestOrders() {
+            try {
+                const response = await fetch('kasir.php?ajax=1&action=get_latest_orders');
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('pending-payment-list').innerHTML = result.data.pending_html;
+                    document.getElementById('non-cash-list').innerHTML = result.data.non_cash_html;
+                    document.getElementById('paid-orders-list').innerHTML = result.data.paid_html;
+                    document.getElementById('archived-receipts-list').innerHTML = result.data.archived_html;
+
+                    // Panggil ulang fungsi untuk mengaktifkan kalkulator kembalian pada elemen baru
+                    initializeChangeCalculation();
+                }
+            } catch (error) {
+                console.error("Gagal mengambil data terbaru:", error);
+            }
+        }
+
+        // Set interval untuk memeriksa pesanan baru setiap 7 detik (7000 milidetik)
+        setInterval(fetchLatestOrders, 7000);
     });
 
-    // --- FUNGSI BARU UNTUK CETAK & ARSIP ---
+    // --- FUNGSI CETAK & ARSIP ---
     async function printAndArchiveAction(orderId) {
         printReceipt(orderId);
         const card = document.getElementById(`order-card-${orderId}`);
@@ -655,9 +831,9 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
         };
     }
 
-    // --- FUNGSI FORMAT RUPIAH (DIPERBARUI) ---
+    // --- FUNGSI FORMAT RUPIAH ---
     function formatRupiah(angka) {
-        const number = Number(angka);
+        const number = Number(String(angka).replace(/\D/g, ''));
         if (isNaN(number)) {
             return '';
         }
