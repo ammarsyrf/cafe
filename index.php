@@ -1,6 +1,7 @@
 <?php
 // File: index.php
 // Halaman untuk pelanggan (dapat diakses melalui QR code di meja)
+//test
 
 require_once 'db_connect.php';
 
