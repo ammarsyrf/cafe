@@ -44,24 +44,8 @@ if ($result) {
     }
 }
 
-// Mengambil pesanan yang sudah diarsipkan (status 'completed_printed') - Tidak ada perubahan di sini
-$archived_orders = [];
-$sql_archived = "SELECT o.*, t.table_number, u.name AS user_name
-                  FROM orders o
-                  LEFT JOIN tables t ON o.table_id = t.id
-                  LEFT JOIN users u ON o.user_id = u.id
-                  WHERE o.status = 'completed_printed'
-                  ORDER BY o.created_at DESC";
-$result_archived = $conn->query($sql_archived);
-if ($result_archived) {
-    while ($row_archived = $result_archived->fetch_assoc()) {
-        $archived_orders[] = $row_archived;
-    }
-}
-
-
 // =========================================================================
-//  LOGIC BAGIAN B: Menangani Aksi POST (Tidak ada perubahan signifikan)
+//  LOGIC BAGIAN B: Menangani Aksi POST
 // =========================================================================
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -93,19 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    // Aksi baru untuk memindahkan pesanan ke arsip setelah dicetak
-    if (isset($_POST['action']) && $_POST['action'] === 'print_and_archive') {
-        $order_id = (int)$_POST['order_id'];
-
-        // Memperbarui status pesanan menjadi 'completed_printed'
-        $sql_update_order = "UPDATE orders SET status = 'completed_printed' WHERE id = ?";
-        $stmt_update_order = $conn->prepare($sql_update_order);
-        $stmt_update_order->bind_param("i", $order_id);
-        $stmt_update_order->execute();
-
-        header("Location: kasir.php?message=Struk+berhasil+dicetak+dan+pesanan+diarsipkan.");
-        exit();
-    }
+    // LOGIKA 'print_and_archive' DIHAPUS. Pencetakan sekarang ditangani oleh JavaScript saja.
+    // Histori transaksi sudah tersimpan di tabel 'orders' dan 'transactions'.
 }
 ?>
 <!DOCTYPE html>
@@ -250,7 +223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <span>Kembalian:</span>
                                     <span id="change-amount-<?= $order['id'] ?>">Rp 0</span>
                                 </div>
-                                <button type="submit" class="w-full bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition-colors">Proses Pembayaran</button>
+                                <button type="submit" class="w-full bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition-colors">Proses Pembayaran & Cetak Struk</button>
                             </form>
                         </div>
                     <?php endforeach; ?>
@@ -336,12 +309,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                             <div class="mt-4 flex flex-wrap gap-2">
                                 <button class="toggle-details bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors">Lihat Detail</button>
-                                <!-- Mengubah tombol cetak struk menjadi form untuk pembaruan status -->
-                                <form method="POST" class="inline-block" onsubmit="printReceipt(<?= $order['id'] ?>); return true;">
-                                    <input type="hidden" name="action" value="print_and_archive">
-                                    <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
-                                    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">Cetak & Arsipkan Struk</button>
-                                </form>
+                                <!-- Tombol cetak struk biasa, tidak lagi mengirim form -->
+                                <button onclick="printReceipt(<?= $order['id'] ?>)" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">Cetak Struk</button>
                             </div>
                         </div>
                     <?php endforeach; ?>
@@ -349,57 +318,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </section>
 
-        <!-- Arsip Pesanan -->
-        <section class="bg-white rounded-xl shadow-lg p-6 mb-8">
-            <h2 class="text-2xl font-bold text-gray-700 mb-4">Arsip Pesanan</h2>
-            <div class="space-y-4">
-                <?php if (empty($archived_orders)): ?>
-                    <p class="text-gray-500">Tidak ada pesanan di arsip.</p>
-                <?php else: ?>
-                    <?php foreach ($archived_orders as $order): ?>
-                        <div class="bg-gray-50 p-4 rounded-lg shadow">
-                            <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-2">
-                                <span class="text-lg font-semibold text-gray-800 mb-2 sm:mb-0">
-                                    Pesanan #<?= $order['id'] ?>
-                                    <?php if ($order['table_number']): ?>
-                                        <span class="ml-2 bg-blue-100 text-blue-800 text-sm px-2 py-1 rounded-full">Meja <?= $order['table_number'] ?></span>
-                                    <?php endif; ?>
-                                </span>
-                                <span class="text-gray-600 text-sm"><?= $order['created_at'] ?></span>
-                            </div>
-                            <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
-                            <p class="text-sm text-gray-500 mb-2">Status: <span class="font-bold text-green-500 capitalize"><?= str_replace('_', ' ', $order['status']) ?></span></p>
-
-                            <!-- Detail Pesanan -->
-                            <div class="order-details-container hidden space-y-2 mt-4">
-                                <?php
-                                $items_sql_archived = "SELECT oi.*, m.name FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
-                                $items_stmt_archived = $conn->prepare($items_sql_archived);
-                                $items_stmt_archived->bind_param("i", $order['id']);
-                                $items_stmt_archived->execute();
-                                $items_result_archived = $items_stmt_archived->get_result();
-                                while ($item = $items_result_archived->fetch_assoc()): ?>
-                                    <div class="flex justify-between">
-                                        <span><?= $item['name'] ?> (<?= $item['quantity'] ?>x)</span>
-                                        <span>Rp <?= number_format($item['price'] * $item['quantity'], 0, ',', '.') ?></span>
-                                    </div>
-                                <?php endwhile; ?>
-                                <div class="border-t pt-2 mt-2">
-                                    <div class="flex justify-between font-bold"><span>Subtotal</span><span>Rp <?= number_format($order['subtotal'], 0, ',', '.') ?></span></div>
-                                    <div class="flex justify-between font-bold"><span>PPN</span><span>Rp <?= number_format($order['tax'], 0, ',', '.') ?></span></div>
-                                    <div class="flex justify-between font-bold"><span>TOTAL</span><span>Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></div>
-                                </div>
-                            </div>
-                            <!-- Tombol Tampilkan Detail dan Cetak Struk -->
-                            <div class="mt-4 flex flex-wrap gap-2">
-                                <button class="toggle-details bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors">Lihat Detail</button>
-                                <button onclick="printReceipt(<?= $order['id'] ?>)" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">Cetak Ulang Struk</button>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </div>
-        </section>
+        <!-- BAGIAN ARSIP PESANAN DIHAPUS -->
 
     </main>
 
