@@ -2,10 +2,11 @@
 // File: includes/header.php
 // Langkah 1: Panggil file konfigurasi untuk mendapatkan BASE_URL.
 // Path ini ('../../config.php') berarti "naik dua level direktori" untuk menemukan config.php
-require_once __DIR__ . '/../../config.php';
+require_once __DIR__ . '/../../db_connect.php';
 ?>
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,15 +16,23 @@ require_once __DIR__ . '/../../config.php';
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
         .sidebar-link.active {
             background-color: #5958A1;
             color: #FFFFFF;
             font-weight: 600;
         }
-        .sidebar-link.active i { color: #FFFFFF; }
+
+        .sidebar-link.active i {
+            color: #FFFFFF;
+        }
     </style>
 </head>
+
 <body class="bg-gray-100 flex">
     <!-- Sidebar -->
     <aside class="w-64 bg-gray-800 text-white min-h-screen p-4 flex flex-col">
@@ -56,7 +65,7 @@ require_once __DIR__ . '/../../config.php';
             </a>
         </nav>
         <div class="mt-auto">
-             <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded transition duration-200 hover:bg-red-700 mt-2">
+            <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded transition duration-200 hover:bg-red-700 mt-2">
                 <i class="fas fa-sign-out-alt w-6 mr-3"></i> Logout
             </a>
         </div>
@@ -72,4 +81,3 @@ require_once __DIR__ . '/../../config.php';
             </div>
         </header>
         <main class="flex-grow p-6">
-
