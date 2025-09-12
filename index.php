@@ -1,8 +1,7 @@
 <?php
 // File: index.php
 // Halaman untuk pelanggan (dapat diakses melalui QR code di meja)
-// Koneksi ke database
-//test --- IGNORE ---
+// koneksi ke database
 require_once 'db_connect.php';
 
 // Memastikan sesi hanya dimulai sekali
