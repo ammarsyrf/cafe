@@ -219,6 +219,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 }
 
+// --- FUNGSI UNTUK MENDAPATKAN IKON KATEGORI ---
+function get_category_icon($category)
+{
+    $category_lower = strtolower($category);
+    $icons = [
+        'makanan' => 'fas fa-utensils',
+        'minuman' => 'fas fa-wine-glass',
+        'kopi' => 'fas fa-coffee',
+        'snack' => 'fas fa-cookie-bite',
+        'dessert' => 'fas fa-ice-cream',
+    ];
+
+    foreach ($icons as $key => $icon) {
+        if (strpos($category_lower, $key) !== false) {
+            return $icon;
+        }
+    }
+    return 'fas fa-tag'; // Ikon default
+}
+
 // Data untuk render halaman
 $table_id = isset($_GET['table']) ? (int)$_GET['table'] : 1;
 $menu_items = [];
@@ -276,10 +296,22 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
             transition: opacity 0.3s ease-in-out;
         }
 
+        /* Gaya untuk kategori aktif (pil biru) */
         .category-nav-item.active {
-            color: #2563EB;
+            background-color: #2563EB;
             /* blue-600 */
-            border-bottom-color: #2563EB;
+            color: white;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        /* Sembunyikan scrollbar horizontal di navigasi kategori */
+        #category-nav .overflow-x-auto::-webkit-scrollbar {
+            display: none;
+        }
+
+        #category-nav .overflow-x-auto {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
         }
     </style>
 </head>
@@ -307,13 +339,14 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
         </div>
     </nav>
 
-    <!-- Category Nav -->
-    <div id="category-nav" class="bg-white sticky top-[68px] z-30 shadow-sm">
+    <!-- Category Nav (Tampilan Baru dengan Pil dan Ikon) -->
+    <div id="category-nav" class="bg-white sticky top-[68px] z-30 shadow-sm py-3">
         <div class="container mx-auto px-4">
-            <div class="flex space-x-4 md:space-x-8 overflow-x-auto whitespace-nowrap -mb-px">
+            <div class="flex space-x-3 overflow-x-auto whitespace-nowrap">
                 <?php foreach ($categories as $category => $items) : ?>
-                    <a href="#category-<?= strtolower($category) ?>" class="category-nav-item py-3 px-1 text-sm md:text-base font-semibold text-gray-500 hover:text-blue-600 border-b-2 border-transparent transition-colors duration-200">
-                        <?= htmlspecialchars(ucfirst($category)) ?>
+                    <a href="#category-<?= strtolower(htmlspecialchars($category)) ?>" class="category-nav-item flex items-center space-x-2 text-sm md:text-base font-semibold text-gray-600 bg-gray-100 hover:bg-blue-100 hover:text-blue-700 rounded-full px-4 py-2 transition-all duration-300 shadow-sm">
+                        <i class="<?= get_category_icon($category) ?> w-5 text-center"></i>
+                        <span><?= htmlspecialchars(ucfirst($category)) ?></span>
                     </a>
                 <?php endforeach; ?>
             </div>
@@ -324,7 +357,7 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
     <main class="container mx-auto px-4 py-8">
         <div class="space-y-12">
             <?php foreach ($categories as $category => $items) : ?>
-                <section id="category-<?= strtolower($category) ?>" class="scroll-mt-32">
+                <section id="category-<?= strtolower(htmlspecialchars($category)) ?>" class="scroll-mt-32">
                     <h2 class="text-2xl md:text-3xl font-bold text-gray-800 capitalize mb-6"><?= htmlspecialchars($category) ?></h2>
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         <?php foreach ($items as $item) : ?>
@@ -771,7 +804,16 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
                         document.querySelectorAll('.category-nav-item').forEach(nav => {
-                            nav.classList.toggle('active', nav.getAttribute('href').substring(1) === entry.target.id);
+                            const isActive = nav.getAttribute('href').substring(1) === entry.target.id;
+                            nav.classList.toggle('active', isActive);
+
+                            if (isActive) {
+                                nav.scrollIntoView({
+                                    behavior: 'smooth',
+                                    block: 'nearest',
+                                    inline: 'center'
+                                });
+                            }
                         });
                     }
                 });

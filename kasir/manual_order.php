@@ -6,7 +6,7 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
-require_once 'db_connect.php';
+require_once '../db_connect.php';
 
 // Cek apakah user sudah login dan memiliki peran sebagai kasir
 if (!isset($_SESSION['id']) || $_SESSION['role'] !== 'cashier') {
