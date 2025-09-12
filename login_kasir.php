@@ -1,6 +1,8 @@
 <?php
 // File: login_kasir.php
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once 'db_connect.php';
 
 // Jika sudah login, redirect ke halaman kasir
@@ -30,9 +32,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Verifikasi password (asumsi password di-hash dengan password_hash())
             if (password_verify($password, $user['password'])) {
                 // Login berhasil
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['user_name'] = $user['name'];
-                $_SESSION['user_role'] = $user['role'];
+                $_SESSION['id'] = $user['id'];
+                $_SESSION['username'] = $user['name'];
+                $_SESSION['role'] = $user['role'];
                 header("Location: kasir.php");
                 exit();
             } else {

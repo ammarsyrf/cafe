@@ -15,4 +15,8 @@ if ($conn->connect_error) {
     die("Koneksi gagal: " . $conn->connect_error);
 }
 
-session_start();
+// Cek jika session belum aktif, baru jalankan session_start()
+// Ini akan memperbaiki notifikasi pemanggilan ganda.
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}

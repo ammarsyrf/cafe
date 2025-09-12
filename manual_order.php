@@ -2,14 +2,28 @@
 // File: manual_order.php
 // Halaman untuk membuat pesanan manual dengan tampilan kartu
 
-// Catatan: Pastikan file db_connect.php sudah ada dan berisi koneksi database.
+// Keamanan & Manajemen Sesi
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once 'db_connect.php';
 
+// Cek apakah user sudah login dan memiliki peran sebagai kasir
+if (!isset($_SESSION['id']) || $_SESSION['role'] !== 'cashier') {
+    header("Location: login_kasir.php?error=Anda harus login sebagai kasir untuk mengakses halaman ini.");
+    exit();
+}
+
+// Ambil informasi kasir dari sesi
+$kasir_id = $_SESSION['id'];
+$kasir_name = $_SESSION['username'];
+
+
 // =========================================================================
-//  LOGIC BAGIAN A: Mengambil data dari database
+//  LOGIC BAGIAN A: Mengambil data dari database
 // =========================================================================
 
-// Mengambil semua item menu yang tersedia untuk manual order
+// Mengambil semua item menu yang tersedia
 $menu_items = [];
 $sql_menu = "SELECT * FROM menu WHERE is_available = 1 ORDER BY category, name";
 $result_menu = $conn->query($sql_menu);
@@ -29,25 +43,33 @@ foreach ($menu_items as $item) {
 }
 
 // =========================================================================
-//  LOGIC BAGIAN B: Menangani Aksi POST
+//  LOGIC BAGIAN B: Menangani Aksi POST
 // =========================================================================
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Aksi untuk membuat pesanan manual baru
     if (isset($_POST['action']) && $_POST['action'] === 'create_manual_order') {
         $order_type = $_POST['order_type'];
         $table_number = $_POST['table_number'] ? (int)$_POST['table_number'] : NULL;
-        $items = json_decode($_POST['items_json'], true); // items adalah array objek JSON
+        $items = json_decode($_POST['items_json'], true);
         $total_amount = (float)$_POST['total_amount'];
-        $amount_given = (float)$_POST['amount_given'];
-        $change_amount = $amount_given - $total_amount;
-        $payment_method = $_POST['payment_method']; // Ambil metode pembayaran dari form
+        $payment_method = $_POST['payment_method'];
+
+        $amount_given = 0;
+        $change_amount = 0;
+
+        if ($payment_method === 'manual_cash') {
+            $amount_given = (float)str_replace('.', '', $_POST['amount_given']);
+            $change_amount = $amount_given - $total_amount;
+        } else {
+            $amount_given = $total_amount;
+            $change_amount = 0;
+        }
 
         $subtotal = 0;
         foreach ($items as $item_data) {
             $subtotal += $item_data['price'] * $item_data['quantity'];
         }
-        $tax = $subtotal * 0.1;
+        $tax = $subtotal * 0.11; // PPN 11%
 
         $table_id = NULL;
         if ($table_number) {
@@ -61,14 +83,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Memasukkan pesanan baru ke tabel orders
-        $sql_insert_order = "INSERT INTO orders (table_id, order_type, subtotal, tax, total_amount, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, 'completed')";
+        $status = ($payment_method === 'manual_cash') ? 'completed' : 'paid';
+        $actual_payment_method = ($payment_method === 'manual_cash') ? 'cash' : $payment_method;
+
+        $sql_insert_order = "INSERT INTO orders (user_id, table_id, order_type, subtotal, tax, total_amount, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt_insert_order = $conn->prepare($sql_insert_order);
-        $stmt_insert_order->bind_param("isddds", $table_id, $order_type, $subtotal, $tax, $total_amount, $payment_method);
+        $stmt_insert_order->bind_param("iisdddss", $kasir_id, $table_id, $order_type, $subtotal, $tax, $total_amount, $actual_payment_method, $status);
         $stmt_insert_order->execute();
         $order_id = $conn->insert_id;
 
-        // Memasukkan item pesanan
         $sql_insert_item = "INSERT INTO order_items (order_id, menu_id, quantity, price) VALUES (?, ?, ?, ?)";
         $stmt_insert_item = $conn->prepare($sql_insert_item);
         foreach ($items as $item_data) {
@@ -76,217 +99,217 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt_insert_item->execute();
         }
 
-        // Memasukkan data ke tabel transaksi
         $sql_insert_trans = "INSERT INTO transactions (order_id, total_paid, amount_given, change_amount, payment_method) VALUES (?, ?, ?, ?, ?)";
         $stmt_insert_trans = $conn->prepare($sql_insert_trans);
-        $stmt_insert_trans->bind_param("iddds", $order_id, $total_amount, $amount_given, $change_amount, $payment_method);
+        $stmt_insert_trans->bind_param("iddds", $order_id, $total_amount, $amount_given, $change_amount, $actual_payment_method);
         $stmt_insert_trans->execute();
 
-        header("Location: kasir.php?message=Pesanan+manual+berhasil+dibuat+dan+dibayar");
+        header("Location: kasir.php?message=Pesanan+manual+berhasil+dibuat");
         exit();
     }
 }
 ?>
-<!DOCTYPE: HTML>
-    <html lang="id">
+<!DOCTYPE html>
+<html lang="id">
 
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Manual Order</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual Order</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-            body {
-                font-family: 'Inter', sans-serif;
-                background-color: #f3f4f6;
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .menu-card {
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+
+        .menu-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+        }
+
+        .summary-item-enter {
+            animation: slideIn 0.3s ease-out forwards;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
             }
 
-            .menu-card {
-                cursor: pointer;
-                transition: transform 0.2s, box-shadow 0.2s;
+            to {
+                opacity: 1;
+                transform: translateX(0);
             }
+        }
 
-            .menu-card:hover {
-                transform: translateY(-5px);
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            }
+        /* Custom scrollbar */
+        #order-summary-list::-webkit-scrollbar {
+            width: 6px;
+        }
 
-            .selected-item-card {
-                background-color: #e2e8f0;
-            }
+        #order-summary-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
 
-            @media print {
-                body * {
-                    visibility: hidden;
-                }
+        #order-summary-list::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 10px;
+        }
 
-                .print-area,
-                .print-area * {
-                    visibility: visible;
-                }
+        #order-summary-list::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+    </style>
+</head>
 
-                .print-area {
-                    position: absolute;
-                    left: 0;
-                    top: 0;
-                    width: 100%;
-                    padding: 1rem;
-                }
-
-                .print-area h2,
-                .print-area h3 {
-                    color: black !important;
-                }
-            }
-        </style>
-    </head>
-
-    <body class="bg-gray-100 min-h-screen flex">
+<body class="bg-gray-100">
+    <div class="flex h-screen bg-gray-100">
         <!-- Sidebar -->
-        <aside class="bg-gray-800 text-white w-64 p-4 space-y-4">
-            <h2 class="text-2xl font-bold mb-6">Kasir</h2>
-            <nav>
-                <a href="kasir.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Daftar Pesanan</a>
-                <a href="manual_order.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 bg-gray-700">Manual Order</a>
-            </nav>
+        <aside id="sidebar" class="bg-gray-800 text-white w-64 p-4 space-y-4 fixed top-0 left-0 h-screen z-40 transform -translate-x-full md:translate-x-0 transition-transform duration-300 ease-in-out flex flex-col">
+            <div>
+                <h2 class="text-2xl font-bold mb-2">Kasir</h2>
+                <div class="p-2.5 bg-gray-700 rounded-lg mb-6">
+                    <p class="text-sm text-gray-300">Selamat Datang,</p>
+                    <p class="font-semibold text-lg"><?= htmlspecialchars($kasir_name) ?></p>
+                </div>
+                <nav>
+                    <a href="kasir.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Daftar Pesanan</a>
+                    <a href="manual_order.php" class="block py-2.5 px-4 rounded transition duration-200 bg-gray-900 font-semibold">Manual Order</a>
+                </nav>
+            </div>
+            <div class="mt-auto">
+                <a href="logout.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-red-500 bg-red-600 text-center font-semibold">
+                    <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                </a>
+            </div>
         </aside>
 
+        <!-- Overlay -->
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-30 hidden md:hidden"></div>
+
         <!-- Main Content -->
-        <main class="flex-grow p-8 flex flex-col md:flex-row gap-8">
-            <!-- Kolom Kiri: Menu Makanan & Minuman -->
-            <section class="flex-1 bg-white rounded-xl shadow-lg p-6">
-                <h2 class="text-2xl font-bold text-gray-700 mb-4">Pilih Menu</h2>
-                <div id="menu-items-container" class="space-y-6 max-h-[70vh] overflow-y-auto">
-                    <?php if (empty($categorized_menu_items)): ?>
-                        <p class="text-gray-500">Tidak ada menu yang tersedia.</p>
-                    <?php else: ?>
-                        <?php foreach ($categorized_menu_items as $category => $items): ?>
-                            <div class="border-b-2 border-gray-200 pb-2">
-                                <h3 class="text-xl font-bold text-gray-800 capitalize"><?= htmlspecialchars($category) ?></h3>
-                            </div>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                <?php foreach ($items as $item): ?>
-                                    <div class="menu-card bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200" data-id="<?= $item['id'] ?>" data-name="<?= htmlspecialchars($item['name']) ?>" data-price="<?= $item['price'] ?>">
-                                        <h3 class="font-semibold text-lg text-gray-800"><?= htmlspecialchars($item['name']) ?></h3>
-                                        <p class="text-sm text-gray-600">Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+        <div class="flex-1 flex flex-col overflow-hidden md:ml-64 transition-all duration-300">
+            <!-- Header -->
+            <header class="sticky top-0 bg-white/80 backdrop-blur-sm z-20">
+                <div class="flex justify-between items-center p-4 sm:p-6 border-b border-gray-200">
+                    <h1 class="text-2xl md:text-3xl font-bold text-gray-800">Buat Pesanan Manual</h1>
+                    <!-- Tombol Menu untuk Mobile -->
+                    <button id="menu-button" class="md:hidden p-2 rounded-md text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-gray-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Page Content -->
+            <main class="flex-1 overflow-x-hidden overflow-y-auto">
+                <div class="p-4 sm:p-6 lg:p-8 flex flex-col lg:flex-row gap-8 items-start">
+                    <!-- Kolom Kiri: Menu -->
+                    <section class="w-full lg:w-3/5">
+                        <div id="menu-items-container" class="space-y-8">
+                            <?php if (empty($categorized_menu_items)): ?>
+                                <p class="text-gray-500 bg-white p-6 rounded-xl shadow-sm">Tidak ada menu yang tersedia.</p>
+                            <?php else: ?>
+                                <?php foreach ($categorized_menu_items as $category => $items): ?>
+                                    <div>
+                                        <h3 class="text-xl font-bold text-gray-800 capitalize mb-4 pb-2 border-b-2 border-gray-200"><?= htmlspecialchars($category) ?></h3>
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                                            <?php foreach ($items as $item): ?>
+                                                <div class="menu-card bg-white p-4 rounded-lg shadow-sm border border-gray-200 cursor-pointer group" data-id="<?= $item['id'] ?>" data-name="<?= htmlspecialchars($item['name']) ?>" data-price="<?= $item['price'] ?>">
+                                                    <div class="flex justify-between items-start">
+                                                        <div>
+                                                            <h4 class="font-semibold text-gray-800 group-hover:text-blue-600"><?= htmlspecialchars($item['name']) ?></h4>
+                                                            <p class="text-sm text-gray-600">Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+                                                        </div>
+                                                        <div class="bg-gray-100 group-hover:bg-blue-500 group-hover:text-white rounded-full w-8 h-8 flex items-center justify-center transition-colors">
+                                                            <i class="fas fa-plus text-sm"></i>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </div>
                                     </div>
                                 <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </section>
+
+                    <!-- Kolom Kanan: Ringkasan -->
+                    <section class="w-full lg:w-2/5 lg:sticky lg:top-24">
+                        <form id="manual-order-form" method="POST" class="bg-white rounded-xl shadow-lg flex flex-col">
+                            <div class="p-6 border-b border-gray-200">
+                                <h2 class="text-2xl font-bold text-gray-700">Ringkasan Pesanan</h2>
                             </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
+                            <div class="p-6 space-y-4 flex-1">
+                                <input type="hidden" name="action" value="create_manual_order">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Jenis Pesanan</label>
+                                    <select name="order_type" id="order-type" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                        <option value="dine-in">Dine In</option>
+                                        <option value="take-away">Take Away</option>
+                                    </select>
+                                </div>
+                                <div id="table-number-group">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Nomor Meja</label>
+                                    <input type="number" name="table_number" id="table-number" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" required>
+                                </div>
+                            </div>
+
+                            <div id="order-summary-list" class="flex-grow space-y-2 p-4 border-t border-b bg-gray-50 min-h-[150px] max-h-64 overflow-y-auto">
+                                <div id="empty-order-message" class="text-gray-400 text-center py-4 h-full flex flex-col justify-center items-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-gray-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                                    </svg>
+                                    <p>Belum ada item ditambahkan.</p>
+                                </div>
+                            </div>
+
+                            <div class="p-6 space-y-2 border-b">
+                                <div class="flex justify-between items-center text-gray-700"><span>Subtotal:</span><span id="manual-subtotal" class="font-semibold">Rp 0</span></div>
+                                <div class="flex justify-between items-center text-gray-700"><span>PPN (11%):</span><span id="manual-tax" class="font-semibold">Rp 0</span></div>
+                                <div class="flex justify-between items-center text-gray-900 font-bold text-xl mt-2"><span>TOTAL:</span><span id="manual-total">Rp 0</span><input type="hidden" name="total_amount" id="total-amount-hidden"></div>
+                            </div>
+
+                            <div class="p-6">
+                                <h3 class="font-bold text-lg mb-2">Metode Pembayaran</h3>
+                                <select name="payment_method" id="payment-method-select" class="block w-full rounded-md border-gray-300 shadow-sm mb-4 focus:border-blue-500 focus:ring-blue-500">
+                                    <option value="manual_cash">Tunai</option>
+                                    <option value="qris">QRIS</option>
+                                </select>
+                                <div id="cash-payment-fields" class="space-y-2">
+                                    <label class="block text-sm font-medium text-gray-700">Uang Diberikan (Rp)</label>
+                                    <input type="text" name="amount_given" id="amount-given" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-lg" required placeholder="0">
+                                    <div class="text-lg font-bold flex justify-between"><span>Kembalian:</span><span id="change-amount">Rp 0</span></div>
+                                </div>
+                                <div id="qris-payment-field" class="hidden text-center">
+                                    <p class="text-sm text-gray-600 mb-2">Konfirmasi setelah pelanggan scan QRIS.</p>
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=Example" alt="QRIS Code" class="mx-auto rounded-lg">
+                                </div>
+                            </div>
+
+                            <div class="p-6 bg-gray-50 rounded-b-xl">
+                                <button type="submit" id="process-manual-payment" class="w-full bg-green-500 text-white px-4 py-3 rounded-lg font-semibold text-lg hover:bg-green-600 transition-colors shadow-md hover:shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed">Proses & Selesaikan</button>
+                                <input type="hidden" name="items_json" id="items-json-input">
+                            </div>
+                        </form>
+                    </section>
                 </div>
-            </section>
-
-            <!-- Kolom Kanan: Ringkasan Pesanan & Pembayaran -->
-            <section class="flex-1 bg-white rounded-xl shadow-lg p-6 flex flex-col">
-                <h2 class="text-2xl font-bold text-gray-700 mb-4">Ringkasan Pesanan</h2>
-                <form id="manual-order-form" method="POST" class="space-y-4 flex flex-col h-full">
-                    <input type="hidden" name="action" value="create_manual_order">
-
-                    <!-- Informasi Pesanan -->
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Jenis Pesanan</label>
-                            <select name="order_type" id="order-type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                                <option value="dine-in">Dine In</option>
-                                <option value="take-away">Take Away</option>
-                            </select>
-                        </div>
-                        <div id="table-number-group">
-                            <label class="block text-sm font-medium text-gray-700">Nomor Meja</label>
-                            <input type="number" name="table_number" id="table-number" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50" required>
-                        </div>
-                    </div>
-
-                    <!-- Daftar Item Pesanan -->
-                    <div id="order-summary-list" class="flex-grow space-y-2 p-2 border rounded-md bg-gray-50 max-h-64 overflow-y-auto">
-                        <p id="empty-order-message" class="text-gray-500 text-center py-4">Belum ada item ditambahkan.</p>
-                    </div>
-
-                    <!-- Ringkasan Harga -->
-                    <div class="mt-auto p-4 bg-gray-100 rounded-lg shadow">
-                        <div class="flex justify-between items-center text-gray-700">
-                            <span>Subtotal:</span>
-                            <span id="manual-subtotal" class="font-semibold">Rp 0</span>
-                        </div>
-                        <div class="flex justify-between items-center text-gray-700">
-                            <span>PPN (10%):</span>
-                            <span id="manual-tax" class="font-semibold">Rp 0</span>
-                        </div>
-                        <div class="flex justify-between items-center text-gray-900 font-bold text-xl mt-2">
-                            <span>TOTAL:</span>
-                            <span id="manual-total">Rp 0</span>
-                            <input type="hidden" name="total_amount" id="total-amount-hidden">
-                        </div>
-                    </div>
-
-                    <!-- Formulir Pembayaran -->
-                    <div class="p-4 bg-gray-100 rounded-lg shadow">
-                        <h3 class="font-bold text-lg mb-2">Pilih Metode Pembayaran</h3>
-                        <select name="payment_method" id="payment-method-select" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 mb-4">
-                            <option value="manual_cash">Tunai</option>
-                            <option value="qris">QRIS</option>
-                        </select>
-
-                        <!-- Bagian Tunai -->
-                        <div id="cash-payment-fields" class="space-y-2">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Uang Diberikan (Rp)</label>
-                                <input type="number" name="amount_given" id="amount-given" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50" min="0" required>
-                            </div>
-                            <div class="mt-2 text-xl font-bold flex justify-between">
-                                <span>Kembalian:</span>
-                                <span id="change-amount">Rp 0</span>
-                            </div>
-                        </div>
-
-                        <!-- Bagian QRIS -->
-                        <div id="qris-payment-field" class="hidden text-center">
-                            <p class="text-sm text-gray-600 mb-2">Silakan pindai QRIS di bawah ini untuk membayar.</p>
-                            <div class="bg-white p-4 rounded-lg inline-block shadow-md">
-
-                            </div>
-                            <input type="hidden" name="amount_given" value="0">
-                        </div>
-                    </div>
-
-                    <button type="submit" id="process-manual-payment" class="w-full bg-green-500 text-white px-4 py-3 rounded-lg font-semibold text-lg hover:bg-green-600 transition-colors">Proses Pembayaran & Cetak Struk</button>
-                    <input type="hidden" name="items_json" id="items-json-input">
-                </form>
-            </section>
-        </main>
-        <script>
-            // Fungsi pengganti alert() dengan toast notification
-            function showMessage(message) {
-                const toast = document.createElement('div');
-                toast.className = 'fixed top-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-xl z-50 transform translate-y-full transition-transform duration-300 ease-out';
-                toast.textContent = message;
-
-                document.body.appendChild(toast);
-
-                // Animasikan toast masuk
-                setTimeout(() => {
-                    toast.classList.remove('translate-y-full');
-                    toast.classList.add('translate-y-0');
-                }, 100);
-
-                // Hilangkan toast setelah 3 detik
-                setTimeout(() => {
-                    toast.classList.remove('translate-y-0');
-                    toast.classList.add('translate-y-full');
-                    // Hapus elemen setelah animasi selesai
-                    setTimeout(() => {
-                        toast.remove();
-                    }, 300);
-                }, 3000);
-            }
-
-            // =========================================================================
-            //  LOGIC JAVASCRIPT UNTUK MANUAL ORDER
-            // =========================================================================
+            </main>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Elemen DOM ---
             const menuItemsContainer = document.getElementById('menu-items-container');
             const orderSummaryList = document.getElementById('order-summary-list');
             const emptyOrderMessage = document.getElementById('empty-order-message');
@@ -304,163 +327,183 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const paymentMethodSelect = document.getElementById('payment-method-select');
             const cashPaymentFields = document.getElementById('cash-payment-fields');
             const qrisPaymentField = document.getElementById('qris-payment-field');
+            const processButton = document.getElementById('process-manual-payment');
 
-            let orderItems = {};
+            // --- Sidebar ---
+            const sidebar = document.getElementById('sidebar');
+            const menuButton = document.getElementById('menu-button');
+            const sidebarOverlay = document.getElementById('sidebar-overlay');
 
-            // Fungsi untuk mengupdate total dan ringkasan pesanan
-            function updateOrderSummary() {
+            const openSidebar = () => {
+                sidebar.classList.remove('-translate-x-full');
+                sidebarOverlay.classList.remove('hidden');
+            };
+            const closeSidebar = () => {
+                sidebar.classList.add('-translate-x-full');
+                sidebarOverlay.classList.add('hidden');
+            };
+
+            menuButton.addEventListener('click', openSidebar);
+            sidebarOverlay.addEventListener('click', closeSidebar);
+
+
+            let orderItems = {}; // { id: {id, name, price, quantity} }
+            const TAX_RATE = 0.11;
+
+            // --- Fungsi Utama ---
+            const formatRupiah = (angka) => new Intl.NumberFormat('id-ID').format(angka);
+
+            const showMessage = (message, isError = false) => {
+                const toast = document.createElement('div');
+                toast.className = `fixed top-5 right-5 text-white px-6 py-3 rounded-lg shadow-xl z-50 transition-transform transform translate-x-full`;
+                toast.textContent = message;
+                toast.style.backgroundColor = isError ? 'rgb(239 68 68)' : 'rgb(34 197 94)';
+                document.body.appendChild(toast);
+
+                setTimeout(() => toast.classList.remove('translate-x-full'), 10);
+                setTimeout(() => {
+                    toast.classList.add('translate-x-full');
+                    toast.addEventListener('transitionend', () => toast.remove());
+                }, 3000);
+            };
+
+            const updateOrderSummary = () => {
                 let subtotal = 0;
-                let itemsCount = 0;
-                orderSummaryList.innerHTML = '';
+                const hasItems = Object.keys(orderItems).length > 0;
 
-                // Perbarui daftar item yang dipilih
+                emptyOrderMessage.classList.toggle('hidden', hasItems);
+                processButton.disabled = !hasItems;
+
+                // Hapus item lama sebelum render ulang
+                orderSummaryList.querySelectorAll('.summary-item').forEach(el => el.remove());
+
                 for (const id in orderItems) {
                     const item = orderItems[id];
                     const itemElement = document.createElement('div');
-                    itemElement.className = 'flex justify-between items-center bg-white p-3 rounded-lg shadow-sm selected-item-card';
+                    itemElement.className = 'summary-item flex justify-between items-center bg-white p-3 rounded-lg shadow-sm summary-item-enter';
                     itemElement.innerHTML = `
-                    <span class="font-medium text-gray-800">${item.name}</span>
-                    <div class="flex items-center space-x-2">
-                        <button type="button" class="quantity-button bg-red-500 text-white w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors" data-id="${id}" data-action="subtract">
-                            <i class="fas fa-minus text-xs"></i>
-                        </button>
-                        <span class="text-lg font-bold w-6 text-center">${item.quantity}</span>
-                        <button type="button" class="quantity-button bg-green-500 text-white w-6 h-6 rounded-full flex items-center justify-center hover:bg-green-600 transition-colors" data-id="${id}" data-action="add">
-                            <i class="fas fa-plus text-xs"></i>
-                        </button>
+                    <div class="flex-grow pr-2">
+                        <p class="font-medium text-gray-800 text-sm">${item.name}</p>
+                        <p class="text-xs text-gray-500">Rp ${formatRupiah(item.price)}</p>
                     </div>
-                `;
+                    <div class="flex items-center space-x-2">
+                        <button type="button" class="quantity-button bg-red-100 text-red-600 w-6 h-6 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors" data-id="${id}" data-action="subtract"><i class="fas fa-minus text-xs"></i></button>
+                        <span class="font-bold w-6 text-center">${item.quantity}</span>
+                        <button type="button" class="quantity-button bg-green-100 text-green-600 w-6 h-6 rounded-full flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors" data-id="${id}" data-action="add"><i class="fas fa-plus text-xs"></i></button>
+                    </div>`;
                     orderSummaryList.appendChild(itemElement);
                     subtotal += item.quantity * item.price;
-                    itemsCount++;
                 }
 
-                if (itemsCount === 0) {
-                    emptyOrderMessage.classList.remove('hidden');
-                    orderSummaryList.appendChild(emptyOrderMessage);
-                } else {
-                    emptyOrderMessage.classList.add('hidden');
-                }
-
-                // Perbarui subtotal, pajak, dan total
-                const tax = subtotal * 0.1;
+                const tax = subtotal * TAX_RATE;
                 const total = subtotal + tax;
 
-                manualSubtotalSpan.textContent = `Rp ${subtotal.toLocaleString('id-ID')}`;
-                manualTaxSpan.textContent = `Rp ${tax.toLocaleString('id-ID')}`;
-                manualTotalSpan.textContent = `Rp ${total.toLocaleString('id-ID')}`;
+                manualSubtotalSpan.textContent = `Rp ${formatRupiah(subtotal)}`;
+                manualTaxSpan.textContent = `Rp ${formatRupiah(tax)}`;
+                manualTotalSpan.textContent = `Rp ${formatRupiah(total)}`;
                 totalAmountHiddenInput.value = total;
 
-                // Perbarui kembalian hanya jika metode pembayaran tunai
-                if (paymentMethodSelect.value === 'manual_cash') {
-                    updateChange(amountGivenInput, changeAmountSpan, total);
-                }
-            }
+                if (paymentMethodSelect.value === 'manual_cash') updateChange();
+            };
 
-            // Fungsi untuk mengupdate kembalian
-            function updateChange(amountInput, changeSpan, total) {
-                const amountGiven = parseFloat(amountInput.value) || 0;
+            const updateChange = () => {
+                const total = parseFloat(totalAmountHiddenInput.value) || 0;
+                const amountGiven = parseFloat(amountGivenInput.value.replace(/\D/g, '')) || 0;
                 const change = amountGiven - total;
-                changeSpan.textContent = `Rp ${change.toLocaleString('id-ID')}`;
-            }
+                changeAmountSpan.textContent = `Rp ${change >= 0 ? formatRupiah(change) : '0'}`;
+            };
 
-            // Event listener untuk klik pada kartu menu
+            // --- Event Listeners ---
             menuItemsContainer.addEventListener('click', (e) => {
                 const card = e.target.closest('.menu-card');
                 if (!card) return;
-
-                const id = card.dataset.id;
-                const name = card.dataset.name;
-                const price = parseFloat(card.dataset.price);
+                const {
+                    id,
+                    name,
+                    price
+                } = card.dataset;
 
                 if (orderItems[id]) {
                     orderItems[id].quantity++;
                 } else {
                     orderItems[id] = {
                         id: parseInt(id),
-                        name: name,
-                        price: price,
+                        name,
+                        price: parseFloat(price),
                         quantity: 1
                     };
                 }
                 updateOrderSummary();
             });
 
-            // Event listener untuk tombol +/- di ringkasan pesanan
             orderSummaryList.addEventListener('click', (e) => {
                 const button = e.target.closest('.quantity-button');
                 if (!button) return;
+                const {
+                    id,
+                    action
+                } = button.dataset;
 
-                const id = button.dataset.id;
-
-                if (button.dataset.action === 'add') {
+                if (action === 'add') {
                     orderItems[id].quantity++;
-                } else if (button.dataset.action === 'subtract') {
+                } else if (action === 'subtract') {
                     orderItems[id].quantity--;
-                    if (orderItems[id].quantity <= 0) {
-                        delete orderItems[id];
-                    }
+                    if (orderItems[id].quantity <= 0) delete orderItems[id];
                 }
                 updateOrderSummary();
             });
 
-            // Event listener untuk uang yang diberikan
-            amountGivenInput.addEventListener('input', () => updateChange(amountGivenInput, changeAmountSpan, parseFloat(totalAmountHiddenInput.value)));
+            amountGivenInput.addEventListener('input', (e) => {
+                let value = e.target.value.replace(/\D/g, '');
+                e.target.value = formatRupiah(value);
+                updateChange();
+            });
 
-            // Event listener untuk jenis pesanan
             orderTypeSelect.addEventListener('change', (e) => {
-                if (e.target.value === 'dine-in') {
-                    tableNumberGroup.classList.remove('hidden');
-                    tableNumberInput.required = true;
-                } else {
-                    tableNumberGroup.classList.add('hidden');
-                    tableNumberInput.required = false;
-                    tableNumberInput.value = ''; // Reset nilai
-                }
+                const isDineIn = e.target.value === 'dine-in';
+                tableNumberGroup.classList.toggle('hidden', !isDineIn);
+                tableNumberInput.required = isDineIn;
+                if (!isDineIn) tableNumberInput.value = '';
             });
 
-            // Event listener untuk pilihan metode pembayaran
             paymentMethodSelect.addEventListener('change', (e) => {
-                if (e.target.value === 'manual_cash') {
-                    cashPaymentFields.classList.remove('hidden');
-                    qrisPaymentField.classList.add('hidden');
-                    amountGivenInput.required = true;
-                } else {
-                    cashPaymentFields.classList.add('hidden');
-                    qrisPaymentField.classList.remove('hidden');
-                    amountGivenInput.required = false;
-                }
+                const isCash = e.target.value === 'manual_cash';
+                cashPaymentFields.classList.toggle('hidden', !isCash);
+                qrisPaymentField.classList.toggle('hidden', isCash);
+                amountGivenInput.required = isCash;
             });
 
-
-            // Sembunyikan form nomor meja saat pertama kali dibuka jika bukan dine-in
-            document.addEventListener('DOMContentLoaded', () => {
-                if (orderTypeSelect.value !== 'dine-in') {
-                    tableNumberGroup.classList.add('hidden');
-                }
-                updateOrderSummary(); // Inisialisasi tampilan
-            });
-
-            // Event listener untuk submit form
             manualOrderForm.addEventListener('submit', (e) => {
-                const items = Object.values(orderItems);
-                if (items.length === 0) {
+                if (Object.keys(orderItems).length === 0) {
                     e.preventDefault();
-                    showMessage("Pilih setidaknya satu item menu.");
+                    showMessage("Pilih setidaknya satu item menu.", true);
+                    return;
+                }
+                if (orderTypeSelect.value === 'dine-in' && !tableNumberInput.value) {
+                    e.preventDefault();
+                    showMessage("Silakan pilih nomor meja untuk pesanan Dine In.", true);
                     return;
                 }
 
-                const orderType = orderTypeSelect.value;
-                if (orderType === 'dine-in' && !tableNumberInput.value) {
-                    e.preventDefault();
-                    showMessage("Silakan pilih nomor meja untuk pesanan Dine In.");
-                    return;
+                if (paymentMethodSelect.value === 'manual_cash') {
+                    const total = parseFloat(totalAmountHiddenInput.value);
+                    const amountGiven = parseFloat(amountGivenInput.value.replace(/\D/g, '')) || 0;
+                    if (amountGiven < total) {
+                        e.preventDefault();
+                        showMessage("Uang yang diberikan kurang dari total pesanan.", true);
+                        return;
+                    }
                 }
 
-                // Tambahkan item yang dipilih ke form sebagai input hidden
-                itemsJsonInput.value = JSON.stringify(items);
+                itemsJsonInput.value = JSON.stringify(Object.values(orderItems));
             });
-        </script>
-    </body>
 
-    </html>
+            // --- Inisialisasi ---
+            updateOrderSummary();
+            orderTypeSelect.dispatchEvent(new Event('change'));
+            paymentMethodSelect.dispatchEvent(new Event('change'));
+        });
+    </script>
+</body>
+
+</html>
