@@ -6,33 +6,34 @@ require_once '../db_connect.php';
 
 // Cek apakah aksi adalah 'cetak_struk'
 if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['id'])) {
-    $transaction_id = $_GET['id'];
-    
+    $order_id = (int)$_GET['id'];
+
     // --- LOGIKA UNTUK CETAK STRUK ---
-    $transaction = null;
+    $order_details = null;
     $order_items = [];
 
-    // Ambil data transaksi utama
-    $sql_tx = "SELECT t.*, u.username, o.id as order_id 
-               FROM transactions t 
-               LEFT JOIN users u ON t.user_id = u.id
-               LEFT JOIN orders o ON t.order_id = o.id
-               WHERE t.id = ?";
+    // Ambil data pesanan utama dari tabel 'orders'
+    // DITAMBAHKAN: LEFT JOIN kedua ke tabel 'users' dengan alias 'u_cashier' untuk mendapatkan nama kasir
+    $sql_order = "SELECT o.*, u_customer.username as customer_username, u_cashier.name as cashier_name
+                  FROM orders o 
+                  LEFT JOIN users u_customer ON o.user_id = u_customer.id
+                  LEFT JOIN users u_cashier ON o.cashier_id = u_cashier.id
+                  WHERE o.id = ?";
 
-    if ($stmt_tx = $conn->prepare($sql_tx)) {
-        $stmt_tx->bind_param("i", $transaction_id);
-        $stmt_tx->execute();
-        $result_tx = $stmt_tx->get_result();
-        if ($result_tx->num_rows > 0) {
-            $transaction = $result_tx->fetch_assoc();
+    if ($stmt_order = $conn->prepare($sql_order)) {
+        $stmt_order->bind_param("i", $order_id);
+        $stmt_order->execute();
+        $result_order = $stmt_order->get_result();
+
+        if ($result_order->num_rows > 0) {
+            $order_details = $result_order->fetch_assoc();
 
             // Ambil item pesanan yang terkait
-            $order_id = $transaction['order_id'];
-            $sql_items = "SELECT oi.quantity, m.name, m.price, (oi.quantity * m.price) as subtotal
+            $sql_items = "SELECT oi.quantity, m.name, m.price as price, (oi.quantity * m.price) as subtotal
                           FROM order_items oi
                           JOIN menu m ON oi.menu_id = m.id
                           WHERE oi.order_id = ?";
-            
+
             if ($stmt_items = $conn->prepare($sql_items)) {
                 $stmt_items->bind_param("i", $order_id);
                 $stmt_items->execute();
@@ -41,29 +42,50 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
                 $stmt_items->close();
             }
         }
-        $stmt_tx->close();
+        $stmt_order->close();
     }
 
     $conn->close();
 
-    if (!$transaction) {
-        die("Transaksi tidak ditemukan.");
+    if (!$order_details) {
+        die("Pesanan tidak ditemukan.");
     }
-    
+
+    // Tentukan nama pelanggan (member atau guest)
+    $customer_name = $order_details['customer_username'] ?? $order_details['customer_name'] ?? 'Guest';
+    // DITAMBAHKAN: Tentukan nama kasir
+    $cashier_name = $order_details['cashier_name'] ?? 'N/A';
+
     // Tampilkan HTML untuk struk dan hentikan eksekusi script
-    ?>
+?>
     <!DOCTYPE html>
     <html lang="id">
+
     <head>
         <meta charset="UTF-8">
-        <title>Struk Transaksi #<?= $transaction['id'] ?></title>
+        <title>Struk Pesanan #<?= $order_details['id'] ?></title>
         <script src="https://cdn.tailwindcss.com"></script>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&display=swap');
-            body { font-family: 'Inconsolata', monospace; width: 300px; margin: 0 auto; }
-            @media print { body { -webkit-print-color-adjust: exact; } .no-print { display: none; } }
+
+            body {
+                font-family: 'Inconsolata', monospace;
+                width: 300px;
+                margin: 0 auto;
+            }
+
+            @media print {
+                body {
+                    -webkit-print-color-adjust: exact;
+                }
+
+                .no-print {
+                    display: none;
+                }
+            }
         </style>
     </head>
+
     <body class="bg-gray-100 p-4">
         <div class="bg-white p-4">
             <div class="text-center mb-4">
@@ -72,34 +94,42 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
                 <p class="text-xs">Telp: 081234567890</p>
             </div>
             <div class="text-xs border-t border-dashed border-black pt-2">
-                <div class="flex justify-between"><span>No. Transaksi:</span><span>#<?= $transaction['id'] ?></span></div>
-                <div class="flex justify-between"><span>Tanggal:</span><span><?= date('d/m/y H:i', strtotime($transaction['transaction_date'])) ?></span></div>
-                <div class="flex justify-between"><span>Pelanggan:</span><span><?= htmlspecialchars($transaction['username'] ?? 'Guest') ?></span></div>
+                <div class="flex justify-between"><span>No. Pesanan:</span><span>#<?= $order_details['id'] ?></span></div>
+                <div class="flex justify-between"><span>Tanggal:</span><span><?= date('d/m/y H:i', strtotime($order_details['created_at'])) ?></span></div>
+                <div class="flex justify-between"><span>Pelanggan:</span><span><?= htmlspecialchars($customer_name) ?></span></div>
+                <!-- DITAMBAHKAN: Baris untuk menampilkan nama kasir -->
+                <div class="flex justify-between"><span>Kasir:</span><span><?= htmlspecialchars($cashier_name) ?></span></div>
             </div>
             <div class="border-t border-b border-dashed border-black my-2 py-2">
-                <?php foreach($order_items as $item): ?>
-                <div class="text-xs mb-1">
-                    <p><?= htmlspecialchars($item['name']) ?></p>
-                    <div class="flex justify-between">
-                        <span><?= $item['quantity'] ?> x <?= number_format($item['price'], 0, ',', '.') ?></span>
-                        <span><?= number_format($item['subtotal'], 0, ',', '.') ?></span>
+                <?php foreach ($order_items as $item): ?>
+                    <div class="text-xs mb-1">
+                        <p><?= htmlspecialchars($item['name']) ?></p>
+                        <div class="flex justify-between">
+                            <span><?= $item['quantity'] ?> x <?= number_format($item['price'], 0, ',', '.') ?></span>
+                            <span><?= number_format($item['subtotal'], 0, ',', '.') ?></span>
+                        </div>
                     </div>
-                </div>
                 <?php endforeach; ?>
             </div>
-            <div class="text-xs">
-                <div class="flex justify-between font-bold"><span>TOTAL</span><span>Rp <?= number_format($transaction['total_paid'], 0, ',', '.') ?></span></div>
-                <div class="flex justify-between"><span>Metode Bayar</span><span class="capitalize"><?= htmlspecialchars($transaction['payment_method']) ?></span></div>
+            <div class="text-xs space-y-1">
+                <div class="flex justify-between"><span>Subtotal</span><span>Rp <?= number_format($order_details['subtotal'], 0, ',', '.') ?></span></div>
+                <div class="flex justify-between"><span>Diskon</span><span>Rp <?= number_format($order_details['discount_amount'], 0, ',', '.') ?></span></div>
+                <div class="flex justify-between"><span>PPN (11%)</span><span>Rp <?= number_format($order_details['tax'], 0, ',', '.') ?></span></div>
+                <div class="flex justify-between font-bold text-sm mt-1 border-t border-dashed pt-1"><span>TOTAL</span><span>Rp <?= number_format($order_details['total_amount'], 0, ',', '.') ?></span></div>
+                <div class="flex justify-between"><span>Metode Bayar</span><span class="capitalize"><?= htmlspecialchars($order_details['payment_method']) ?></span></div>
             </div>
-            <div class="text-center text-xs mt-6"><p>Terima kasih atas kunjungan Anda!</p></div>
+            <div class="text-center text-xs mt-6">
+                <p>Terima kasih atas kunjungan Anda!</p>
+            </div>
         </div>
         <div class="text-center mt-4 no-print">
             <button onclick="window.print()" class="bg-blue-500 text-white px-4 py-2 rounded">Cetak Struk</button>
-            <button onclick="window.close()" class="bg-gray-500 text-white px-4 py-2 rounded">Tutup</button>
+            <a href="laporan.php" class="bg-gray-500 text-white px-4 py-2 rounded">Kembali</a>
         </div>
     </body>
+
     </html>
-    <?php
+<?php
     exit(); // Hentikan script agar tidak menampilkan halaman laporan
 }
 
@@ -114,24 +144,25 @@ $end_date = $_GET['end_date'] ?? date('Y-m-d');
 $total_revenue = 0;
 $total_transactions = 0;
 $best_seller = ['name' => 'N/A', 'quantity' => 0];
-$transactions = [];
+$orders_data = [];
 
-// Query untuk mengambil data transaksi
-$sql_transactions = "SELECT t.id, t.transaction_date, u.username, t.total_paid 
-                     FROM transactions t
-                     LEFT JOIN users u ON t.user_id = u.id
-                     WHERE DATE(t.transaction_date) BETWEEN ? AND ?
-                     ORDER BY t.transaction_date DESC";
+// Query untuk mengambil data pesanan (sebagai pengganti transaksi)
+$sql_orders = "SELECT o.id, o.created_at, o.total_amount, 
+                      COALESCE(u.username, o.customer_name) as customer_name
+               FROM orders o
+               LEFT JOIN users u ON o.user_id = u.id
+               WHERE DATE(o.created_at) BETWEEN ? AND ?
+               ORDER BY o.created_at DESC";
 
-if ($stmt = $conn->prepare($sql_transactions)) {
+if ($stmt = $conn->prepare($sql_orders)) {
     $stmt->bind_param("ss", $start_date, $end_date);
     $stmt->execute();
     $result = $stmt->get_result();
     if ($result) {
-        $transactions = $result->fetch_all(MYSQLI_ASSOC);
+        $orders_data = $result->fetch_all(MYSQLI_ASSOC);
         $total_transactions = $result->num_rows;
-        foreach ($transactions as $tx) {
-            $total_revenue += $tx['total_paid'];
+        foreach ($orders_data as $order) {
+            $total_revenue += $order['total_amount'];
         }
     }
     $stmt->close();
@@ -141,9 +172,8 @@ if ($stmt = $conn->prepare($sql_transactions)) {
 $sql_bestseller = "SELECT m.name, SUM(oi.quantity) as total_quantity 
                    FROM order_items oi
                    JOIN orders o ON oi.order_id = o.id
-                   JOIN transactions t ON o.id = t.order_id
                    JOIN menu m ON oi.menu_id = m.id
-                   WHERE DATE(t.transaction_date) BETWEEN ? AND ?
+                   WHERE DATE(o.created_at) BETWEEN ? AND ?
                    GROUP BY m.name ORDER BY total_quantity DESC LIMIT 1";
 
 if ($stmt_bs = $conn->prepare($sql_bestseller)) {
@@ -163,7 +193,7 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
 
-<div class="container mx-auto">
+<div class="container mx-auto p-4 md:p-6">
     <!-- Header dan Filter -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <h1 class="text-3xl font-bold text-gray-800">Laporan Penjualan</h1>
@@ -173,11 +203,15 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                 <span class="text-gray-500">hingga</span>
                 <input type="date" name="end_date" value="<?= htmlspecialchars($end_date) ?>" class="border p-2 rounded-lg text-sm">
                 <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
-                    <i class="fas fa-filter"></i> Filter
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L12 12.414l-8.707-8.707A1 1 0 013 6V4z"></path>
+                    </svg> Filter
                 </button>
             </form>
             <button onclick="generatePDF()" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 flex items-center gap-2 shadow">
-                <i class="fas fa-file-pdf"></i> Cetak PDF
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg> Cetak PDF
             </button>
         </div>
     </div>
@@ -186,16 +220,31 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
     <div id="summary-section">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-green-100 p-4 rounded-full"><i class="fas fa-wallet text-2xl text-green-600"></i></div>
-                <div><p class="text-sm text-gray-500">Total Pendapatan</p><p class="text-2xl font-bold text-gray-800">Rp <?= number_format($total_revenue, 0, ',', '.') ?></p></div>
+                <div class="bg-green-100 p-4 rounded-full"><svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v.01"></path>
+                    </svg></div>
+                <div>
+                    <p class="text-sm text-gray-500">Total Pendapatan</p>
+                    <p class="text-2xl font-bold text-gray-800">Rp <?= number_format($total_revenue, 0, ',', '.') ?></p>
+                </div>
             </div>
             <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-blue-100 p-4 rounded-full"><i class="fas fa-receipt text-2xl text-blue-600"></i></div>
-                <div><p class="text-sm text-gray-500">Total Transaksi</p><p class="text-2xl font-bold text-gray-800"><?= $total_transactions ?></p></div>
+                <div class="bg-blue-100 p-4 rounded-full"><svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                    </svg></div>
+                <div>
+                    <p class="text-sm text-gray-500">Total Pesanan</p>
+                    <p class="text-2xl font-bold text-gray-800"><?= $total_transactions ?></p>
+                </div>
             </div>
             <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-yellow-100 p-4 rounded-full"><i class="fas fa-trophy text-2xl text-yellow-600"></i></div>
-                <div><p class="text-sm text-gray-500">Produk Terlaris</p><p class="text-2xl font-bold text-gray-800"><?= htmlspecialchars($best_seller['name']) ?></p></div>
+                <div class="bg-yellow-100 p-4 rounded-full"><svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-12v4m-2-2h4m5 6v4m-2-2h4M17 3l-4.5 5.5L17 14l-5.5 4.5"></path>
+                    </svg></div>
+                <div>
+                    <p class="text-sm text-gray-500">Produk Terlaris</p>
+                    <p class="text-2xl font-bold text-gray-800"><?= htmlspecialchars($best_seller['name']) ?></p>
+                </div>
             </div>
         </div>
     </div>
@@ -203,32 +252,34 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
     <!-- Tabel Laporan -->
     <div class="bg-white rounded-xl shadow-lg overflow-x-auto">
         <table id="report-table" class="min-w-full leading-normal">
-            <thead>
-                <tr class="bg-gray-100">
-                    <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase">ID Transaksi</th>
-                    <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase">Tanggal</th>
-                    <th class="px-5 py-3 border-b-2 text-left text-xs font-semibold uppercase">Nama Pelanggan</th>
-                    <th class="px-5 py-3 border-b-2 text-right text-xs font-semibold uppercase">Total Bayar (Rp)</th>
-                    <th class="px-5 py-3 border-b-2 text-center text-xs font-semibold uppercase">Aksi</th>
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">ID Pesanan</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Pelanggan</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Bayar (Rp)</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (!empty($transactions)): ?>
-                    <?php foreach ($transactions as $tx): ?>
+                <?php if (!empty($orders_data)): ?>
+                    <?php foreach ($orders_data as $order): ?>
                         <tr>
-                            <td class="px-5 py-5 border-b text-sm">#<?= $tx['id'] ?></td>
-                            <td class="px-5 py-5 border-b text-sm"><?= date('d M Y, H:i', strtotime($tx['transaction_date'])) ?></td>
-                            <td class="px-5 py-5 border-b text-sm font-medium"><?= htmlspecialchars($tx['username'] ?? 'Guest') ?></td>
-                            <td class="px-5 py-5 border-b text-sm text-right font-semibold"><?= number_format($tx['total_paid'], 0, ',', '.') ?></td>
-                            <td class="px-5 py-5 border-b text-sm text-center">
-                                <a href="laporan.php?action=cetak_struk&id=<?= $tx['id'] ?>" target="_blank" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-1 px-3 rounded text-xs">
+                            <td class="px-5 py-4 border-b border-gray-200 text-sm">#<?= $order['id'] ?></td>
+                            <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></td>
+                            <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium"><?= htmlspecialchars($order['customer_name'] ?? 'Guest') ?></td>
+                            <td class="px-5 py-4 border-b border-gray-200 text-sm text-right font-semibold"><?= number_format($order['total_amount'], 0, ',', '.') ?></td>
+                            <td class="px-5 py-4 border-b border-gray-200 text-sm text-center">
+                                <a href="laporan.php?action=cetak_struk&id=<?= $order['id'] ?>" target="_blank" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-1 px-3 rounded text-xs">
                                     Cetak Struk
                                 </a>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <tr><td colspan="5" class="text-center py-10 text-gray-500">Tidak ada transaksi pada rentang tanggal yang dipilih.</td></tr>
+                    <tr>
+                        <td colspan="5" class="text-center py-10 text-gray-500">Tidak ada pesanan pada rentang tanggal yang dipilih.</td>
+                    </tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -236,54 +287,88 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
 </div>
 
 <script>
-function generatePDF() {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
+    function generatePDF() {
+        const {
+            jsPDF
+        } = window.jspdf;
+        const doc = new jsPDF();
 
-    // Judul PDF
-    doc.setFontSize(18);
-    doc.text("Laporan Penjualan Kafe", 14, 22);
-    
-    // Informasi Periode
-    doc.setFontSize(11);
-    doc.setTextColor(100);
-    const startDate = "<?= date('d M Y', strtotime($start_date)) ?>";
-    const endDate = "<?= date('d M Y', strtotime($end_date)) ?>";
-    doc.text(`Periode: ${startDate} - ${endDate}`, 14, 30);
+        // Judul PDF
+        doc.setFontSize(18);
+        doc.text("Laporan Penjualan Kafe", 14, 22);
 
-    // Ringkasan Statistik
-    doc.autoTable({
-        startY: 40,
-        head: [['Deskripsi', 'Jumlah']],
-        body: [
-            ['Total Pendapatan', 'Rp <?= number_format($total_revenue, 0, ',', '.') ?>'],
-            ['Total Transaksi', '<?= $total_transactions ?>'],
-            ['Produk Terlaris', '<?= htmlspecialchars($best_seller['name']) ?>']
-        ],
-        theme: 'grid', styles: { fontSize: 10 }
-    });
+        // Informasi Periode
+        doc.setFontSize(11);
+        doc.setTextColor(100);
+        const startDate = "<?= date('d M Y', strtotime($start_date)) ?>";
+        const endDate = "<?= date('d M Y', strtotime($end_date)) ?>";
+        doc.text(`Periode: ${startDate} - ${endDate}`, 14, 30);
 
-    // Tabel Transaksi
-    doc.autoTable({
-        startY: doc.autoTable.previous.finalY + 10,
-        html: '#report-table',
-        columns: [
-            { header: 'ID Transaksi', dataKey: 0 },
-            { header: 'Tanggal', dataKey: 1 },
-            { header: 'Nama Pelanggan', dataKey: 2 },
-            { header: 'Total Bayar (Rp)', dataKey: 3 },
-        ],
-        headStyles: { fillColor: [22, 160, 133] },
-        styles: { fontSize: 9 }
-    });
+        // Ringkasan Statistik
+        doc.autoTable({
+            startY: 40,
+            head: [
+                ['Deskripsi', 'Jumlah']
+            ],
+            body: [
+                ['Total Pendapatan', 'Rp <?= number_format($total_revenue, 0, ',', '.') ?>'],
+                ['Total Pesanan', '<?= $total_transactions ?>'],
+                ['Produk Terlaris', '<?= htmlspecialchars(addslashes($best_seller['name'])) ?>'] // addslashes to handle quotes
+            ],
+            theme: 'grid',
+            styles: {
+                fontSize: 10
+            }
+        });
 
-    // Simpan PDF
-    doc.save(`Laporan_Penjualan_${startDate}_-_${endDate}.pdf`);
-}
+        // Tabel Transaksi
+        doc.autoTable({
+            startY: doc.autoTable.previous.finalY + 10,
+            html: '#report-table',
+            // Penting: Hilangkan kolom 'Aksi' dari PDF
+            columns: [{
+                    header: 'ID Pesanan',
+                    dataKey: 0
+                },
+                {
+                    header: 'Tanggal',
+                    dataKey: 1
+                },
+                {
+                    header: 'Nama Pelanggan',
+                    dataKey: 2
+                },
+                {
+                    header: 'Total Bayar (Rp)',
+                    dataKey: 3
+                },
+            ],
+            // Opsi untuk memastikan kolom 'Aksi' tidak ikut tercetak
+            columnStyles: {
+                4: {
+                    cellWidth: 0,
+                    minCellWidth: 0
+                }
+            },
+            didParseCell: function(data) {
+                if (data.column.index === 4) {
+                    data.cell.text = ''; // Kosongkan teks di kolom Aksi
+                }
+            },
+            headStyles: {
+                fillColor: [22, 160, 133]
+            },
+            styles: {
+                fontSize: 9
+            }
+        });
+
+        // Simpan PDF
+        doc.save(`Laporan_Penjualan_${startDate}_-_${endDate}.pdf`);
+    }
 </script>
 
 <?php
 require_once 'includes/footer.php';
 $conn->close();
 ?>
-
