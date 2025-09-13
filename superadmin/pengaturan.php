@@ -34,9 +34,9 @@ require_once 'includes/header.php';
 // Data sekarang diambil dari variabel global $APP_CONFIG yang sudah dimuat di db_connect.php
 $days_open = isset($APP_CONFIG['days_open']) ? json_decode($APP_CONFIG['days_open'], true) : [];
 
-// Ambil data pengguna (hanya admin dan kasir)
+// Ambil data pengguna (admin, kasir, dan superadmin)
 $staff_users = [];
-$sql_staff = "SELECT id, username, email, role FROM users WHERE role IN ('admin', 'kasir') ORDER BY role, username";
+$sql_staff = "SELECT id, username, email, name, role FROM users WHERE role IN ('admin', 'cashier', 'superadmin') ORDER BY role, username";
 $result_staff = $conn->query($sql_staff);
 if ($result_staff) {
     $staff_users = $result_staff->fetch_all(MYSQLI_ASSOC);
@@ -133,7 +133,7 @@ if ($result_staff) {
     <div id="content-users" class="tab-content hidden">
         <div class="bg-white p-8 rounded-xl shadow-lg">
             <!-- Manajemen Pengguna -->
-            <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Manajemen Pengguna (Admin & Kasir)</h2>
+            <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Manajemen Pengguna (Admin, Kasir, & Superadmin)</h2>
             <div class="overflow-x-auto">
                 <table class="min-w-full leading-normal">
                     <thead>
@@ -147,7 +147,7 @@ if ($result_staff) {
                     <tbody>
                         <?php foreach ($staff_users as $staff): ?>
                             <tr>
-                                <td class="p-3 border-b"><?= htmlspecialchars($staff['username']) ?></td>
+                                <td class="p-3 border-b"><?= htmlspecialchars($staff['name']) ?></td>
                                 <td class="p-3 border-b"><?= htmlspecialchars($staff['email']) ?></td>
                                 <td class="p-3 border-b capitalize"><?= htmlspecialchars($staff['role']) ?></td>
                                 <td class="p-3 border-b"><a href="#" class="text-blue-600 hover:underline">Edit</a></td>
