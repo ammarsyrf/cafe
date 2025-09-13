@@ -260,7 +260,8 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Menu Cafe - Meja <?= htmlspecialchars($table_id) ?></title>
+    <!-- Judul halaman dinamis -->
+    <title>Menu <?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? 'Cafe') ?> - Meja <?= htmlspecialchars($table_id) ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -321,7 +322,8 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
     <!-- Navbar -->
     <nav class="bg-white shadow-sm py-3 sticky top-0 z-40">
         <div class="container mx-auto px-4 flex justify-between items-center">
-            <h1 class="text-xl md:text-2xl font-extrabold text-gray-800">Cafe Bahagia</h1>
+            <!-- Nama Cafe Dinamis -->
+            <h1 class="text-xl md:text-2xl font-extrabold text-gray-800"><?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? 'Nama Cafe') ?></h1>
             <div class="flex items-center space-x-4">
                 <span class="bg-gray-100 text-gray-800 px-3 py-1.5 rounded-full font-semibold text-sm">Meja: <?= htmlspecialchars($table_id) ?></span>
                 <div id="authButtonContainer">
@@ -390,6 +392,33 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
             <?php endforeach; ?>
         </div>
     </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white mt-12 py-8">
+        <div class="container mx-auto px-4 text-center">
+            <h3 class="text-2xl font-bold mb-2"><?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? 'Nama Cafe') ?></h3>
+            <?php if (!empty($APP_CONFIG['cafe_address'])) : ?>
+                <p class="text-gray-400 mb-1"><i class="fas fa-map-marker-alt mr-2"></i><?= htmlspecialchars($APP_CONFIG['cafe_address']) ?></p>
+            <?php endif; ?>
+            <?php if (!empty($APP_CONFIG['cafe_phone'])) : ?>
+                <p class="text-gray-400 mb-4"><i class="fas fa-phone mr-2"></i><?= htmlspecialchars($APP_CONFIG['cafe_phone']) ?></p>
+            <?php endif; ?>
+
+            <div class="flex justify-center space-x-4">
+                <?php if (!empty($APP_CONFIG['social_instagram'])) : ?>
+                    <a href="<?= htmlspecialchars($APP_CONFIG['social_instagram']) ?>" target="_blank" class="text-gray-300 hover:text-white transition-colors text-2xl"><i class="fab fa-instagram"></i></a>
+                <?php endif; ?>
+                <?php if (!empty($APP_CONFIG['social_facebook'])) : ?>
+                    <a href="<?= htmlspecialchars($APP_CONFIG['social_facebook']) ?>" target="_blank" class="text-gray-300 hover:text-white transition-colors text-2xl"><i class="fab fa-facebook"></i></a>
+                <?php endif; ?>
+                <?php if (!empty($APP_CONFIG['social_twitter'])) : ?>
+                    <a href="<?= htmlspecialchars($APP_CONFIG['social_twitter']) ?>" target="_blank" class="text-gray-300 hover:text-white transition-colors text-2xl"><i class="fab fa-twitter"></i></a>
+                <?php endif; ?>
+            </div>
+            <p class="text-gray-500 text-sm mt-6">&copy; <?= date('Y') ?> <?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? 'Nama Cafe') ?>. All Rights Reserved.</p>
+        </div>
+    </footer>
+
 
     <!-- Cart Floating Action Button -->
     <button id="cartFab" class="fixed bottom-6 right-6 bg-green-500 text-white rounded-full shadow-lg w-16 h-16 flex items-center justify-center z-50 transform hover:scale-110 transition-transform">
@@ -507,6 +536,10 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // --- Variabel Global dari PHP ---
+            const CAFE_NAME = '<?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? 'Cafe', ENT_QUOTES) ?>';
+            const TABLE_ID = <?= $table_id ?>;
+
             // Element Constants
             const cartFab = document.getElementById('cartFab');
             const cartDrawer = document.getElementById('cart-drawer');
@@ -727,7 +760,7 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
                             <input type="hidden" name="is_ajax" value="1">
                         </form>
                     </div>
-                `).join('');
+                    `).join('');
 
                     document.getElementById('cart-subtotal').textContent = formatCurrency(data.subtotal);
                     document.getElementById('cart-ppn').textContent = formatCurrency(data.ppn);
@@ -783,16 +816,16 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
                 let contentHTML = '';
                 switch (method) {
                     case 'cash':
-                        contentHTML = `<p>Silakan ke kasir, sebutkan nomor meja <b>(Meja: ${<?= $table_id ?>})</b> dan bayar sejumlah <b>${formattedTotal}</b>.</p><p class="mt-4 text-sm text-center text-gray-500">Terima kasih atas pesanan Anda!</p>`;
+                        contentHTML = `<p>Silakan ke kasir, sebutkan nomor meja <b>(Meja: ${TABLE_ID})</b> dan bayar sejumlah <b>${formattedTotal}</b>.</p><p class="mt-4 text-sm text-center text-gray-500">Terima kasih atas pesanan Anda!</p>`;
                         break;
                     case 'QRIS':
                         contentHTML = `<p>Scan QRIS di bawah ini dan bayar sejumlah <b>${formattedTotal}</b>.</p><img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=ContohDataQRIS" class="mx-auto my-4 rounded-lg">`;
                         break;
                     case 'transfer':
-                        contentHTML = `<p>Transfer sejumlah <b>${formattedTotal}</b> ke:<br><b class="text-lg">BCA: 123456789</b><br>(a/n Cafe Bahagia)</p>`;
+                        contentHTML = `<p>Transfer sejumlah <b>${formattedTotal}</b> ke:<br><b class="text-lg">BCA: 123456789</b><br>(a/n ${CAFE_NAME})</p>`;
                         break;
                     case 'virtual_account':
-                        contentHTML = `<p>Bayar sejumlah <b>${formattedTotal}</b> ke VA berikut:<br><b class="text-lg">VA: 901234567890</b><br>(a/n Cafe Bahagia)</p>`;
+                        contentHTML = `<p>Bayar sejumlah <b>${formattedTotal}</b> ke VA berikut:<br><b class="text-lg">VA: 901234567890</b><br>(a/n ${CAFE_NAME})</p>`;
                         break;
                 }
                 document.getElementById('payment-content').innerHTML = contentHTML;

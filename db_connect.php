@@ -1,22 +1,38 @@
 <?php
 // File: db_connect.php
-// Konfigurasi koneksi ke database MySQL
 
-$servername = "localhost";
-$username = "root"; // Ganti dengan username database Anda
-$password = ""; // Ganti dengan password database Anda
-$dbname = "db_cafe"; // Ganti dengan nama database Anda
+// --- PENGATURAN KONEKSI DATABASE ---
+// Sesuaikan dengan konfigurasi database Anda
+$db_host = 'localhost';
+$db_user = 'root';
+$db_pass = '';
+$db_name = 'db_cafe'; // <-- Ganti dengan nama database Anda
 
-// Buat koneksi
-$conn = new mysqli($servername, $username, $password, $dbname);
+// --- BUAT KONEKSI ---
+$conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
 
-// Periksa koneksi
+// Cek koneksi
 if ($conn->connect_error) {
-    die("Koneksi gagal: " . $conn->connect_error);
+    die("Koneksi Gagal: " . $conn->connect_error);
 }
 
-// Cek jika session belum aktif, baru jalankan session_start()
-// Ini akan memperbaiki notifikasi pemanggilan ganda.
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+// Set character set
+$conn->set_charset("utf8mb4");
+
+
+// --- MEMUAT PENGATURAN APLIKASI DARI DATABASE ---
+$APP_CONFIG = [];
+$sql_settings = "SELECT setting_name, setting_value FROM settings";
+$result_settings = $conn->query($sql_settings);
+
+if ($result_settings) {
+    while ($row = $result_settings->fetch_assoc()) {
+        $APP_CONFIG[$row['setting_name']] = $row['setting_value'];
+    }
+} else {
+    // Handle jika query gagal (opsional, bisa di-log)
+    error_log("Gagal memuat pengaturan dari database.");
 }
+
+// --- FUNGSI GLOBAL (jika ada) ---
+// ... Anda bisa menambahkan fungsi-fungsi yang sering digunakan di sini ...

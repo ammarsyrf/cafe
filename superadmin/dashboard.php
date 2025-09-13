@@ -3,22 +3,13 @@
 require_once 'includes/header.php';
 
 // Pastikan Anda memiliki file db_connect.php yang berisi koneksi ke database
-// Contoh isi db_connect.php:
-// <?php
-// $servername = "localhost";
-// $username = "root";
-// $password = "";
-// $dbname = "db_cafe";
-// $conn = new mysqli($servername, $username, $password, $dbname);
-// if ($conn->connect_error) {
-//     die("Connection failed: " . $conn->connect_error);
-// }
-require_once '../db_connect.php'; // Aktifkan baris ini setelah db_connect.php siap
+require_once '../db_connect.php';
 
 // 1. Mengambil Pendapatan & Jumlah Transaksi Hari Ini
 $today_revenue = 0;
 $total_transactions = 0;
-$sql_today = "SELECT SUM(total_paid) AS total_revenue, COUNT(id) AS total_tx FROM transactions WHERE DATE(transaction_date) = CURDATE()";
+// FIX: Mengganti order_date menjadi created_at
+$sql_today = "SELECT SUM(total_amount) AS total_revenue, COUNT(id) AS total_tx FROM orders WHERE DATE(created_at) = CURDATE() AND status IN ('completed', 'paid')";
 $result_today = $conn->query($sql_today);
 if ($row_today = $result_today->fetch_assoc()) {
     $today_revenue = $row_today['total_revenue'] ?? 0;
@@ -30,9 +21,9 @@ $avg_purchase = ($total_transactions > 0) ? $today_revenue / $total_transactions
 
 // 3. Menghitung Pesanan yang Belum Diproses
 $unprocessed_orders = 0;
-$sql_unprocessed = "SELECT COUNT(id) AS unprocessed_count FROM orders WHERE status = 'pending' OR status = 'processing'";
+$sql_unprocessed = "SELECT COUNT(id) AS unprocessed_count FROM orders WHERE status = 'pending_payment' OR status = 'processing'";
 $result_unprocessed = $conn->query($sql_unprocessed);
-if($row_unprocessed = $result_unprocessed->fetch_assoc()) {
+if ($row_unprocessed = $result_unprocessed->fetch_assoc()) {
     $unprocessed_orders = $row_unprocessed['unprocessed_count'] ?? 0;
 }
 
@@ -69,12 +60,13 @@ for ($i = 6; $i >= 0; $i--) {
     $chart_data[$date] = 0; // Inisialisasi dengan 0
 }
 
-$sql_sales_chart = "SELECT DATE(transaction_date) as sales_date, SUM(total_paid) as daily_total 
-                    FROM transactions 
-                    WHERE transaction_date >= CURDATE() - INTERVAL 6 DAY 
-                    GROUP BY DATE(transaction_date)";
+// FIX: Mengganti order_date menjadi created_at
+$sql_sales_chart = "SELECT DATE(created_at) as sales_date, SUM(total_amount) as daily_total 
+                    FROM orders 
+                    WHERE created_at >= CURDATE() - INTERVAL 6 DAY AND status IN ('completed', 'paid')
+                    GROUP BY DATE(created_at)";
 $result_sales_chart = $conn->query($sql_sales_chart);
-while($row = $result_sales_chart->fetch_assoc()) {
+while ($row = $result_sales_chart->fetch_assoc()) {
     $chart_data[$row['sales_date']] = $row['daily_total'];
 }
 
@@ -85,8 +77,11 @@ $chart_data_json = json_encode(array_values($chart_data));
 
 <!-- Konten Dashboard -->
 <div class="container mx-auto">
+    <!-- Judul Dinamis -->
+    <h1 class="text-3xl font-bold text-gray-800 mb-6">Dashboard <?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? 'Toko Anda') ?></h1>
+
     <!-- Stat Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-6">
         <!-- Card Pendapatan -->
         <div class="bg-white p-5 rounded-xl shadow flex items-center">
             <div class="p-3 rounded-full bg-green-100 text-green-600 mr-4"><i class="fas fa-wallet fa-2x"></i></div>
@@ -144,10 +139,10 @@ $chart_data_json = json_encode(array_values($chart_data));
                 <ul class="space-y-3">
                     <?php if (!empty($best_sellers)): ?>
                         <?php foreach ($best_sellers as $item): ?>
-                        <li class="flex justify-between items-center text-sm">
-                            <span><?= htmlspecialchars($item['name']) ?></span>
-                            <span class="font-semibold text-gray-600"><?= $item['total_quantity'] ?> Terjual</span>
-                        </li>
+                            <li class="flex justify-between items-center text-sm">
+                                <span><?= htmlspecialchars($item['name']) ?></span>
+                                <span class="font-semibold text-gray-600"><?= $item['total_quantity'] ?> Terjual</span>
+                            </li>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <li class="text-sm text-gray-500">Tidak ada data penjualan.</li>
@@ -157,12 +152,12 @@ $chart_data_json = json_encode(array_values($chart_data));
             <div class="bg-white p-6 rounded-xl shadow">
                 <h3 class="text-lg font-semibold text-gray-700 mb-4">Stok Segera Habis</h3>
                 <ul class="space-y-3">
-                     <?php if (!empty($low_stock_menu)): ?>
+                    <?php if (!empty($low_stock_menu)): ?>
                         <?php foreach ($low_stock_menu as $item): ?>
-                        <li class="flex justify-between items-center text-sm">
-                            <span class="text-red-600"><?= htmlspecialchars($item['name']) ?></span>
-                            <span class="font-semibold text-red-600">Sisa <?= $item['stock'] ?></span>
-                        </li>
+                            <li class="flex justify-between items-center text-sm">
+                                <span class="text-red-600"><?= htmlspecialchars($item['name']) ?></span>
+                                <span class="font-semibold text-red-600">Sisa <?= $item['stock'] ?></span>
+                            </li>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <li class="text-sm text-gray-500">Semua stok aman.</li>
@@ -173,40 +168,43 @@ $chart_data_json = json_encode(array_values($chart_data));
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-// Logika untuk Grafik Penjualan
-const ctx = document.getElementById('salesChart').getContext('2d');
-const salesChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-        labels: <?= $chart_labels_json ?>,
-        datasets: [{
-            label: 'Penjualan (Rp)',
-            data: <?= $chart_data_json ?>,
-            backgroundColor: 'rgba(89, 88, 161, 0.2)',
-            borderColor: '#5958A1',
-            borderWidth: 3,
-            tension: 0.4,
-            fill: true
-        }]
-    },
-    options: {
-        responsive: true,
-        scales: {
-            y: {
-                beginAtZero: true,
-                ticks: {
-                    callback: function(value) {
-                        return 'Rp ' + new Intl.NumberFormat('id-ID').format(value);
+    // Logika untuk Grafik Penjualan
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    const salesChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: <?= $chart_labels_json ?>,
+            datasets: [{
+                label: 'Penjualan (Rp)',
+                data: <?= $chart_data_json ?>,
+                backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                borderColor: 'rgba(59, 130, 246, 1)',
+                borderWidth: 3,
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return 'Rp ' + new Intl.NumberFormat('id-ID').format(value);
+                        }
                     }
                 }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
             }
-        },
-        plugins: {
-            legend: { display: false }
         }
-    }
-});
+    });
 </script>
 
 <?php
@@ -214,4 +212,3 @@ const salesChart = new Chart(ctx, {
 require_once 'includes/footer.php';
 $conn->close(); // Tutup koneksi database
 ?>
-

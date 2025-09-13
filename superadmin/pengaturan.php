@@ -1,15 +1,17 @@
 <?php
 // File: superadmin/pengaturan.php
-require_once 'includes/header.php';
+
+// Panggil koneksi database dan muat pengaturan terlebih dahulu
 require_once '../db_connect.php';
 
 // --- PROSES SIMPAN PENGATURAN UMUM ---
+// Blok ini harus dieksekusi SEBELUM ada output HTML (yang ada di header.php)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_general_settings'])) {
     // Simpan hari buka sebagai JSON array
     $days_open = isset($_POST['days_open']) ? json_encode($_POST['days_open']) : '[]';
     $_POST['settings']['days_open'] = $days_open;
 
-    $sql_upsert = "INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)";
+    $sql_upsert = "INSERT INTO settings (setting_name, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)";
     $stmt = $conn->prepare($sql_upsert);
 
     foreach ($_POST['settings'] as $key => $value) {
@@ -17,19 +19,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_general_settings'
         $stmt->execute();
     }
     $stmt->close();
+
     // Redirect untuk refresh halaman dengan data baru dan notifikasi sukses
+    // Ini sekarang bisa berjalan tanpa error
     header("Location: pengaturan.php?status=success");
     exit();
 }
 
-// --- AMBIL DATA DARI DATABASE ---
-// Ambil semua pengaturan umum
-$settings_raw = $conn->query("SELECT * FROM settings")->fetch_all(MYSQLI_ASSOC);
-$settings = [];
-foreach ($settings_raw as $row) {
-    $settings[$row['setting_key']] = $row['setting_value'];
-}
-$days_open = isset($settings['days_open']) ? json_decode($settings['days_open'], true) : [];
+// Setelah logika redirect selesai, baru kita panggil file yang menghasilkan HTML
+require_once 'includes/header.php';
+
+
+// --- AMBIL DATA DARI DATABASE (untuk ditampilkan di form) ---
+// Data sekarang diambil dari variabel global $APP_CONFIG yang sudah dimuat di db_connect.php
+$days_open = isset($APP_CONFIG['days_open']) ? json_decode($APP_CONFIG['days_open'], true) : [];
 
 // Ambil data pengguna (hanya admin dan kasir)
 $staff_users = [];
@@ -54,7 +57,7 @@ if ($result_staff) {
             </button>
         </nav>
     </div>
-    
+
     <!-- Notifikasi Sukses -->
     <?php if (isset($_GET['status']) && $_GET['status'] == 'success'): ?>
         <div class="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 mb-6 rounded-md" role="alert">
@@ -71,15 +74,15 @@ if ($result_staff) {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-medium">Nama Toko</label>
-                        <input type="text" name="settings[cafe_name]" value="<?= htmlspecialchars($settings['cafe_name'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
+                        <input type="text" name="settings[cafe_name]" value="<?= htmlspecialchars($APP_CONFIG['cafe_name'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
                     </div>
                     <div>
                         <label class="block text-sm font-medium">No. Telepon Toko</label>
-                        <input type="text" name="settings[cafe_phone]" value="<?= htmlspecialchars($settings['cafe_phone'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
+                        <input type="text" name="settings[cafe_phone]" value="<?= htmlspecialchars($APP_CONFIG['cafe_phone'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-sm font-medium">Alamat Toko</label>
-                        <textarea name="settings[cafe_address]" rows="3" class="mt-1 w-full border rounded-lg p-2"><?= htmlspecialchars($settings['cafe_address'] ?? '') ?></textarea>
+                        <textarea name="settings[cafe_address]" rows="3" class="mt-1 w-full border rounded-lg p-2"><?= htmlspecialchars($APP_CONFIG['cafe_address'] ?? '') ?></textarea>
                     </div>
                 </div>
             </div>
@@ -90,11 +93,11 @@ if ($result_staff) {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                     <div>
                         <label class="block text-sm font-medium">Jam Buka</label>
-                        <input type="time" name="settings[hour_open]" value="<?= htmlspecialchars($settings['hour_open'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
+                        <input type="time" name="settings[hour_open]" value="<?= htmlspecialchars($APP_CONFIG['hour_open'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
                     </div>
                     <div>
                         <label class="block text-sm font-medium">Jam Tutup</label>
-                        <input type="time" name="settings[hour_close]" value="<?= htmlspecialchars($settings['hour_close'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
+                        <input type="time" name="settings[hour_close]" value="<?= htmlspecialchars($APP_CONFIG['hour_close'] ?? '') ?>" class="mt-1 w-full border rounded-lg p-2">
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-sm font-medium mb-2">Hari Buka</label>
@@ -115,9 +118,9 @@ if ($result_staff) {
             <div>
                 <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Media Sosial</h2>
                 <div class="space-y-4">
-                    <div class="flex items-center gap-4"><i class="fab fa-instagram w-5 text-xl"></i><input type="url" name="settings[social_instagram]" placeholder="https://instagram.com/username" value="<?= htmlspecialchars($settings['social_instagram'] ?? '') ?>" class="w-full border rounded-lg p-2"></div>
-                    <div class="flex items-center gap-4"><i class="fab fa-facebook w-5 text-xl"></i><input type="url" name="settings[social_facebook]" placeholder="https://facebook.com/username" value="<?= htmlspecialchars($settings['social_facebook'] ?? '') ?>" class="w-full border rounded-lg p-2"></div>
-                    <div class="flex items-center gap-4"><i class="fab fa-twitter w-5 text-xl"></i><input type="url" name="settings[social_twitter]" placeholder="https://twitter.com/username" value="<?= htmlspecialchars($settings['social_twitter'] ?? '') ?>" class="w-full border rounded-lg p-2"></div>
+                    <div class="flex items-center gap-4"><i class="fab fa-instagram w-5 text-xl"></i><input type="url" name="settings[social_instagram]" placeholder="https://instagram.com/username" value="<?= htmlspecialchars($APP_CONFIG['social_instagram'] ?? '') ?>" class="w-full border rounded-lg p-2"></div>
+                    <div class="flex items-center gap-4"><i class="fab fa-facebook w-5 text-xl"></i><input type="url" name="settings[social_facebook]" placeholder="https://facebook.com/username" value="<?= htmlspecialchars($APP_CONFIG['social_facebook'] ?? '') ?>" class="w-full border rounded-lg p-2"></div>
+                    <div class="flex items-center gap-4"><i class="fab fa-twitter w-5 text-xl"></i><input type="url" name="settings[social_twitter]" placeholder="https://twitter.com/username" value="<?= htmlspecialchars($APP_CONFIG['social_twitter'] ?? '') ?>" class="w-full border rounded-lg p-2"></div>
                 </div>
             </div>
 
@@ -133,20 +136,22 @@ if ($result_staff) {
             <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Manajemen Pengguna (Admin & Kasir)</h2>
             <div class="overflow-x-auto">
                 <table class="min-w-full leading-normal">
-                    <thead><tr class="bg-gray-100">
-                        <th class="p-3 text-left text-xs font-semibold uppercase">Username</th>
-                        <th class="p-3 text-left text-xs font-semibold uppercase">Email</th>
-                        <th class="p-3 text-left text-xs font-semibold uppercase">Role</th>
-                        <th class="p-3 text-left text-xs font-semibold uppercase">Aksi</th>
-                    </tr></thead>
-                    <tbody>
-                        <?php foreach($staff_users as $staff): ?>
-                        <tr>
-                            <td class="p-3 border-b"><?= htmlspecialchars($staff['username']) ?></td>
-                            <td class="p-3 border-b"><?= htmlspecialchars($staff['email']) ?></td>
-                            <td class="p-3 border-b capitalize"><?= htmlspecialchars($staff['role']) ?></td>
-                            <td class="p-3 border-b"><a href="#" class="text-blue-600 hover:underline">Edit</a></td>
+                    <thead>
+                        <tr class="bg-gray-100">
+                            <th class="p-3 text-left text-xs font-semibold uppercase">Username</th>
+                            <th class="p-3 text-left text-xs font-semibold uppercase">Email</th>
+                            <th class="p-3 text-left text-xs font-semibold uppercase">Role</th>
+                            <th class="p-3 text-left text-xs font-semibold uppercase">Aksi</th>
                         </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($staff_users as $staff): ?>
+                            <tr>
+                                <td class="p-3 border-b"><?= htmlspecialchars($staff['username']) ?></td>
+                                <td class="p-3 border-b"><?= htmlspecialchars($staff['email']) ?></td>
+                                <td class="p-3 border-b capitalize"><?= htmlspecialchars($staff['role']) ?></td>
+                                <td class="p-3 border-b"><a href="#" class="text-blue-600 hover:underline">Edit</a></td>
+                            </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
@@ -168,28 +173,27 @@ if ($result_staff) {
 </div>
 
 <script>
-function changeTab(tabName) {
-    // Sembunyikan semua konten tab
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.add('hidden');
-    });
-    // Non-aktifkan semua tombol tab
-    document.querySelectorAll('.tab-button').forEach(button => {
-        button.classList.remove('text-blue-600', 'border-blue-600');
-        button.classList.add('text-gray-500', 'border-transparent');
-    });
+    function changeTab(tabName) {
+        // Sembunyikan semua konten tab
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.add('hidden');
+        });
+        // Non-aktifkan semua tombol tab
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.classList.remove('text-blue-600', 'border-blue-600');
+            button.classList.add('text-gray-500', 'border-transparent');
+        });
 
-    // Tampilkan konten tab yang dipilih
-    document.getElementById('content-' + tabName).classList.remove('hidden');
-    // Aktifkan tombol tab yang dipilih
-    const activeButton = document.getElementById('tab-' + tabName);
-    activeButton.classList.add('text-blue-600', 'border-blue-600');
-    activeButton.classList.remove('text-gray-500', 'border-transparent');
-}
+        // Tampilkan konten tab yang dipilih
+        document.getElementById('content-' + tabName).classList.remove('hidden');
+        // Aktifkan tombol tab yang dipilih
+        const activeButton = document.getElementById('tab-' + tabName);
+        activeButton.classList.add('text-blue-600', 'border-blue-600');
+        activeButton.classList.remove('text-gray-500', 'border-transparent');
+    }
 </script>
 
 <?php
 require_once 'includes/footer.php';
 $conn->close();
 ?>
-

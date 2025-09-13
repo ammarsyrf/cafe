@@ -1,9 +1,12 @@
 <?php
-require_once 'includes/header.php';
+// File: superadmin/tambah_menu.php
+
+// Panggil koneksi DB terlebih dahulu untuk logika di bawah
 require_once '../db_connect.php';
 
 $message = '';
 
+// --- SEMUA LOGIKA PEMROSESAN FORM DIPINDAHKAN KE ATAS ---
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $name = mysqli_real_escape_string($conn, $_POST['name']);
     $description = mysqli_real_escape_string($conn, $_POST['description']);
@@ -11,7 +14,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $category = mysqli_real_escape_string($conn, $_POST['category']);
     $stock = (int)$_POST['stock'];
     $is_available = isset($_POST['is_available']) ? 1 : 0;
-    
+
     $image_path = '';
 
     // Proses unggah gambar
@@ -20,7 +23,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if (!is_dir($target_dir)) {
             mkdir($target_dir, 0777, true);
         }
-        
+
         $image_name = basename($_FILES["menu_image"]["name"]);
         $imageFileType = strtolower(pathinfo($image_name, PATHINFO_EXTENSION));
         $new_filename = uniqid() . '.' . $imageFileType;
@@ -29,7 +32,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
         // Validasi file gambar
         $check = getimagesize($_FILES["menu_image"]["tmp_name"]);
-        if($check === false) {
+        if ($check === false) {
             $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>File bukan gambar.</div>";
             $uploadOk = 0;
         }
@@ -37,7 +40,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>Ukuran gambar terlalu besar.</div>";
             $uploadOk = 0;
         }
-        if($imageFileType != "jpg" && $imageFileType != "png" && $imageFileType != "jpeg") {
+        if ($imageFileType != "jpg" && $imageFileType != "png" && $imageFileType != "jpeg") {
             $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>Hanya format JPG, JPEG, & PNG yang diizinkan.</div>";
             $uploadOk = 0;
         }
@@ -56,7 +59,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if ($stmt = $conn->prepare($sql)) {
             $stmt->bind_param("ssisisi", $name, $description, $price, $category, $stock, $image_path, $is_available);
             if ($stmt->execute()) {
-                header("Location: kelolamenu.php");
+                // Redirect sekarang bisa berjalan tanpa error
+                header("Location: kelolamenu.php?status=add_success");
                 exit();
             } else {
                 $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>Error: " . $stmt->error . "</div>";
@@ -65,21 +69,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
     }
 }
+
+// --- SETELAH SEMUA LOGIKA SELESAI, BARU TAMPILKAN HTML ---
+require_once 'includes/header.php';
 ?>
 
 <div class="container mx-auto">
-    <?php if(!empty($message)) echo $message; ?>
+    <?php if (!empty($message)) echo $message; ?>
 
     <form action="tambah_menu.php" method="POST" enctype="multipart/form-data">
         <div class="bg-white p-8 rounded-xl shadow-lg">
             <div class="flex justify-between items-center mb-6">
                 <h1 class="text-3xl font-bold text-gray-800">Tambah Menu Baru</h1>
                 <div>
-                     <a href="kelolamenu.php" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg">Batal</a>
-                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Simpan Menu</button>
+                    <a href="kelolamenu.php" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg">Batal</a>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Simpan Menu</button>
                 </div>
             </div>
-            
+
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <!-- Kolom Kiri: Unggah Gambar -->
                 <div class="lg:col-span-1">
@@ -105,11 +112,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <select name="category" id="category" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
                             <option value="makanan">Makanan</option>
                             <option value="minuman">Minuman</option>
+                            <option value="kopi">Kopi</option>
                             <option value="snack">Snack</option>
-                            <option value="other">Lainnya</option>
+                            <option value="dessert">Dessert</option>
                         </select>
                     </div>
-                     <div>
+                    <div>
                         <label for="stock" class="block text-sm font-medium text-gray-700">Stok</label>
                         <input type="number" name="stock" id="stock" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
                     </div>
@@ -117,7 +125,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <label for="description" class="block text-sm font-medium text-gray-700">Deskripsi</label>
                         <textarea name="description" id="description" rows="3" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"></textarea>
                     </div>
-                     <div>
+                    <div>
                         <label for="is_available" class="flex items-center">
                             <input type="checkbox" name="is_available" id="is_available" checked class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
                             <span class="ml-2 text-sm text-gray-900">Tersedia untuk dijual</span>
@@ -130,25 +138,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </div>
 
 <script>
-document.getElementById('imagePreview').addEventListener('click', function() {
-    document.getElementById('menu_image').click();
-});
+    document.getElementById('imagePreview').addEventListener('click', function() {
+        document.getElementById('menu_image').click();
+    });
 
-document.getElementById('menu_image').addEventListener('change', function(event) {
-    const [file] = event.target.files;
-    if (file) {
-        const previewContainer = document.getElementById('imagePreview');
-        previewContainer.innerHTML = ''; // Hapus teks placeholder
-        const img = document.createElement('img');
-        img.src = URL.createObjectURL(file);
-        img.classList.add('max-h-full', 'max-w-full', 'rounded-lg');
-        previewContainer.appendChild(img);
-    }
-});
+    document.getElementById('menu_image').addEventListener('change', function(event) {
+        const [file] = event.target.files;
+        if (file) {
+            const previewContainer = document.getElementById('imagePreview');
+            previewContainer.innerHTML = ''; // Hapus teks placeholder
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(file);
+            img.classList.add('max-h-full', 'max-w-full', 'rounded-lg');
+            previewContainer.appendChild(img);
+        }
+    });
 </script>
 
 <?php
 require_once 'includes/footer.php';
 $conn->close();
 ?>
-
