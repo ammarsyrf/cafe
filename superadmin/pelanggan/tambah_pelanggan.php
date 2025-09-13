@@ -1,16 +1,21 @@
 <?php
 // File: superadmin/pelanggan/tambah_pelanggan.php
 
-// Panggil header dan koneksi database dengan path yang benar
-require_once '../includes/header.php';
+// Mulai session di baris paling atas, hanya jika belum ada session yang aktif
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Panggil koneksi database terlebih dahulu
 require_once '../../db_connect.php';
 
 $error_message = '';
 $success_message = '';
 
-// Proses form jika metode adalah POST
+// Proses form jika metode adalah POST (sebelum output HTML)
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Ambil data dari form
+    // PERBAIKAN: Menggunakan 'username' sesuai dengan nama input di form
     $username = trim($_POST['username']);
     $email = trim($_POST['email']);
     $phone_number = trim($_POST['phone_number']);
@@ -20,26 +25,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (empty($username) || empty($email) || empty($password)) {
         $error_message = "Nama, email, dan password wajib diisi.";
     } else {
-        // Cek apakah username atau email sudah ada
-        $sql_check = "SELECT id FROM users WHERE username = ? OR email = ?";
+        // Cek apakah nama atau email sudah ada di tabel 'members'
+        $sql_check = "SELECT id FROM members WHERE name = ? OR email = ?";
         $stmt_check = $conn->prepare($sql_check);
         $stmt_check->bind_param("ss", $username, $email);
         $stmt_check->execute();
         $stmt_check->store_result();
 
         if ($stmt_check->num_rows > 0) {
-            $error_message = "Username atau email sudah terdaftar.";
+            $error_message = "Nama atau email sudah terdaftar.";
         } else {
             // Hash password untuk keamanan
             $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            
-            // PERUBAHAN: Peran pengguna diatur secara otomatis menjadi 'member'
-            $role = 'member'; 
 
-            // Siapkan query untuk memasukkan data baru
-            $sql_insert = "INSERT INTO users (username, email, phone_number, password, role) VALUES (?, ?, ?, ?, ?)";
+            // Siapkan query untuk memasukkan data baru ke tabel 'members'
+            $sql_insert = "INSERT INTO members (name, email, phone_number, password) VALUES (?, ?, ?, ?)";
             $stmt_insert = $conn->prepare($sql_insert);
-            $stmt_insert->bind_param("sssss", $username, $email, $phone_number, $hashed_password, $role);
+            $stmt_insert->bind_param("ssss", $username, $email, $phone_number, $hashed_password);
 
             // Eksekusi query
             if ($stmt_insert->execute()) {
@@ -48,13 +50,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 exit();
             } else {
                 // Tampilkan pesan error yang lebih detail dari database
-                $error_message = "Gagal menambahkan pelanggan. Error: " . $stmt_insert->error;
+                $error_message = "Gagal menambahkan member. Error: " . $stmt_insert->error;
             }
             $stmt_insert->close();
         }
         $stmt_check->close();
     }
 }
+
+// Panggil header SETELAH semua logika PHP selesai
+require_once '../includes/header.php';
 ?>
 
 <div class="container mx-auto">
@@ -66,16 +71,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <h1 class="text-3xl font-bold text-gray-800">Tambah Member Baru</h1>
         </div>
 
-        <!-- Tampilkan pesan error atau sukses -->
+        <!-- Tampilkan pesan error -->
         <?php if ($error_message): ?>
             <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-md" role="alert">
                 <p class="font-bold">Terjadi Kesalahan</p>
-                <p><?= $error_message ?></p>
+                <p><?= htmlspecialchars($error_message) ?></p>
             </div>
         <?php endif; ?>
 
         <form action="tambah_pelanggan.php" method="POST" class="space-y-6">
-            <!-- Nama Pelanggan -->
+            <!-- Nama Member -->
             <div>
                 <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Nama Member</label>
                 <div class="relative rounded-md shadow-sm">
@@ -89,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <!-- Email -->
             <div>
                 <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                 <div class="relative rounded-md shadow-sm">
+                <div class="relative rounded-md shadow-sm">
                     <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                         <i class="fas fa-envelope text-gray-400"></i>
                     </div>
@@ -99,19 +104,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             <!-- Nomor Telepon -->
             <div>
-                <label for="phone_number" class="block text-sm font-medium text-gray-700 mb-1">Nomor Telepon</label>
-                 <div class="relative rounded-md shadow-sm">
+                <label for="phone_number" class="block text-sm font-medium text-gray-700 mb-1">Nomor Telepon (Opsional)</label>
+                <div class="relative rounded-md shadow-sm">
                     <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                         <i class="fas fa-phone text-gray-400"></i>
                     </div>
                     <input type="text" name="phone_number" id="phone_number" class="block w-full rounded-md border-gray-300 pl-10 focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-3" placeholder="081234567890">
                 </div>
             </div>
-            
+
             <!-- Password -->
             <div>
                 <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                 <div class="relative rounded-md shadow-sm">
+                <div class="relative rounded-md shadow-sm">
                     <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                         <i class="fas fa-lock text-gray-400"></i>
                     </div>
@@ -121,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             <!-- Tombol Simpan -->
             <div class="pt-4">
-                 <button type="submit" class="w-full flex justify-center items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg hover:shadow-xl transition duration-300">
+                <button type="submit" class="w-full flex justify-center items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg hover:shadow-xl transition duration-300">
                     <i class="fas fa-save"></i>
                     Simpan Member
                 </button>
@@ -134,4 +139,3 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 require_once '../includes/footer.php';
 $conn->close();
 ?>
-

@@ -9,6 +9,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['reply_text'])) {
     $reply_text = trim($_POST['reply_text']);
 
     if (!empty($reply_text)) {
+        // Asumsi ada kolom 'reply' di tabel 'reviews'
         $sql_reply = "UPDATE reviews SET reply = ? WHERE id = ?";
         if ($stmt_reply = $conn->prepare($sql_reply)) {
             $stmt_reply->bind_param("si", $reply_text, $review_id);
@@ -30,9 +31,10 @@ if ($rating_filter != 'all' && is_numeric($rating_filter)) {
 
 // Ambil data ulasan dari database
 $reviews = [];
-$sql = "SELECT r.id, r.rating, r.comment, r.reply, r.created_at, u.username 
+// PERBAIKAN: Join ke tabel 'members' menggunakan 'member_id' dan ambil 'name'
+$sql = "SELECT r.id, r.rating, r.comment, r.reply, r.created_at, m.name 
         FROM reviews r
-        JOIN users u ON r.user_id = u.id
+        JOIN members m ON r.member_id = m.id
         $sql_where
         ORDER BY r.created_at DESC";
 
@@ -72,7 +74,8 @@ if ($result) {
                 <div class="bg-white rounded-xl shadow-lg p-6">
                     <div class="flex justify-between items-start">
                         <div>
-                            <p class="font-bold text-lg text-gray-800"><?= htmlspecialchars($review['username']) ?></p>
+                            <!-- PERBAIKAN: Tampilkan 'name' dari tabel member, bukan 'username' -->
+                            <p class="font-bold text-lg text-gray-800"><?= htmlspecialchars($review['name']) ?></p>
                             <p class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($review['created_at'])) ?></p>
                         </div>
                         <div class="flex items-center text-yellow-500">
@@ -82,8 +85,8 @@ if ($result) {
                             <span class="ml-2 text-sm text-gray-600">(<?= $review['rating'] ?>)</span>
                         </div>
                     </div>
-                    <p class="text-gray-700 mt-4"><?= nl2br(htmlspecialchars($review['comment'])) ?></p>
-                    
+                    <p class="text-gray-700 mt-4"><?= nl2br(htmlspecialchars($review['comment'] ?? '')) ?></p>
+
                     <!-- Area Balasan -->
                     <div class="mt-4 pt-4 border-t border-gray-200">
                         <?php if (!empty($review['reply'])): ?>

@@ -1,9 +1,13 @@
 <?php
 // File: includes/header.php
 
-// REVISI: Panggil session_start() di paling atas, sebelum output apa pun.
-// Ini akan memperbaiki error "headers already sent".
-session_start();
+// File: includes/header.php
+
+// REVISI: Mulai session hanya jika belum ada yang aktif.
+// Ini akan memperbaiki notice "session already active".
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Langkah 1: Panggil file konfigurasi untuk mendapatkan BASE_URL.
 // Path ini ('../../config.php') berarti "naik dua level direktori" untuk menemukan config.php
@@ -11,6 +15,7 @@ require_once __DIR__ . '/../../config.php';
 ?>
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -20,16 +25,24 @@ require_once __DIR__ . '/../../config.php';
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
         .sidebar-link.active {
             background-color: #5958A1;
             color: #FFFFFF;
             font-weight: 600;
         }
-        .sidebar-link.active i { color: #FFFFFF; }
+
+        .sidebar-link.active i {
+            color: #FFFFFF;
+        }
     </style>
 </head>
 <!-- REVISI: Menambahkan class 'h-screen' dan 'overflow-hidden' untuk mencegah body scroll -->
+
 <body class="bg-gray-100 flex h-screen overflow-hidden">
     <!-- Sidebar -->
     <!-- REVISI: Menghapus 'min-h-screen' karena tinggi diatur oleh body -->
@@ -63,7 +76,7 @@ require_once __DIR__ . '/../../config.php';
             </a>
         </nav>
         <div class="mt-auto">
-             <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-red-700 mt-2">
+            <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-red-700 mt-2">
                 <i class="fas fa-sign-out-alt w-6 mr-3"></i> Logout
             </a>
         </div>
@@ -82,47 +95,46 @@ require_once __DIR__ . '/../../config.php';
         </header>
         <!-- REVISI: Menghapus 'flex-grow' -->
         <main class="p-6">
-<!-- REVISI: JavaScript untuk menu aktif ditambahkan di sini -->
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    const currentPath = window.location.pathname;
-    const sidebarLinks = document.querySelectorAll('aside .sidebar-link');
-    const pageTitle = document.getElementById('page-title');
-    
-    // Temukan seksi utama saat ini (contoh: 'dashboard', 'pelanggan', 'penjualan')
-    let currentSection = 'dashboard'; // Default
-    const pathParts = currentPath.split('/');
-    const superadminIndex = pathParts.indexOf('superadmin');
+            <!-- REVISI: JavaScript untuk menu aktif ditambahkan di sini -->
+            <script>
+                document.addEventListener("DOMContentLoaded", function() {
+                    const currentPath = window.location.pathname;
+                    const sidebarLinks = document.querySelectorAll('aside .sidebar-link');
+                    const pageTitle = document.getElementById('page-title');
 
-    if (superadminIndex > -1 && pathParts.length > superadminIndex + 1) {
-        let potentialSection = pathParts[superadminIndex + 1];
-        if (potentialSection.endsWith('.php')) {
-            currentSection = potentialSection.replace('.php', '');
-        } else {
-            currentSection = potentialSection; // Ini adalah nama folder
-        }
-    }
+                    // Temukan seksi utama saat ini (contoh: 'dashboard', 'pelanggan', 'penjualan')
+                    let currentSection = 'dashboard'; // Default
+                    const pathParts = currentPath.split('/');
+                    const superadminIndex = pathParts.indexOf('superadmin');
 
-    // Loop melalui link dan aktifkan yang cocok
-    let linkActivated = false;
-    sidebarLinks.forEach(link => {
-        const linkHref = link.getAttribute('href');
-        if (linkHref.includes(currentSection)) {
-            link.classList.add('active');
-            if (pageTitle) {
-                pageTitle.textContent = link.textContent.trim();
-            }
-            linkActivated = true;
-        }
-    });
+                    if (superadminIndex > -1 && pathParts.length > superadminIndex + 1) {
+                        let potentialSection = pathParts[superadminIndex + 1];
+                        if (potentialSection.endsWith('.php')) {
+                            currentSection = potentialSection.replace('.php', '');
+                        } else {
+                            currentSection = potentialSection; // Ini adalah nama folder
+                        }
+                    }
 
-    // Fallback jika tidak ada yang cocok, aktifkan dashboard
-    if (!linkActivated) {
-        const dashboardLink = document.querySelector('a[href*="dashboard.php"]');
-        if (dashboardLink) {
-            dashboardLink.classList.add('active');
-        }
-    }
-});
-</script>
+                    // Loop melalui link dan aktifkan yang cocok
+                    let linkActivated = false;
+                    sidebarLinks.forEach(link => {
+                        const linkHref = link.getAttribute('href');
+                        if (linkHref.includes(currentSection)) {
+                            link.classList.add('active');
+                            if (pageTitle) {
+                                pageTitle.textContent = link.textContent.trim();
+                            }
+                            linkActivated = true;
+                        }
+                    });
 
+                    // Fallback jika tidak ada yang cocok, aktifkan dashboard
+                    if (!linkActivated) {
+                        const dashboardLink = document.querySelector('a[href*="dashboard.php"]');
+                        if (dashboardLink) {
+                            dashboardLink.classList.add('active');
+                        }
+                    }
+                });
+            </script>
