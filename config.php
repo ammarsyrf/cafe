@@ -28,3 +28,33 @@ try {
     // Jika koneksi gagal, hentikan eksekusi script dan tampilkan pesan error yang jelas.
     die("Koneksi ke database gagal: " . $e->getMessage());
 }
+
+// Inisialisasi array untuk menampung semua pengaturan
+$APP_CONFIG = [];
+
+try {
+    // Query untuk mengambil semua data dari tabel settings
+    $stmt = $pdo->query("SELECT setting_name, setting_value FROM settings");
+
+    // Loop melalui hasil query dan masukkan ke dalam array $APP_CONFIG
+    while ($row = $stmt->fetch()) {
+        // Key menjadi nama setting (e.g., 'cafe_name')
+        // Value menjadi nilai setting (e.g., 'Cafe Bagus')
+        $APP_CONFIG[$row['setting_name']] = $row['setting_value'];
+    }
+} catch (PDOException $e) {
+    // Jika query gagal (misal: tabel 'settings' tidak ada), catat error
+    // dan berikan nilai default untuk mencegah error pada bagian lain dari aplikasi.
+    error_log("Gagal mengambil data dari tabel settings: " . $e->getMessage());
+    $APP_CONFIG = [
+        'cafe_name'        => 'Nama Cafe Default',
+        'cafe_phone'       => 'Nomor Telepon Default',
+        'cafe_address'     => 'Alamat Default',
+        'hour_open'        => '08:00',
+        'hour_close'       => '22:00',
+        'social_instagram' => '#',
+        'social_facebook'  => '#',
+        'social_twitter'   => '#',
+        'days_open'        => '[]'
+    ];
+}

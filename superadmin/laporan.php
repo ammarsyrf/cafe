@@ -4,16 +4,18 @@
 // Hubungkan ke database terlebih dahulu untuk semua aksi
 require_once '../db_connect.php';
 
-// Cek apakah aksi adalah 'cetak_struk'
-if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['id'])) {
+// --- [BARU] AKSI UNTUK MENGAMBIL DETAIL PESANAN (JSON) ---
+if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_GET['id'])) {
     $order_id = (int)$_GET['id'];
+    $response = ['success' => false, 'message' => 'Pesanan tidak ditemukan.'];
 
-    // --- LOGIKA UNTUK CETAK STRUK (Tidak diubah) ---
     $order_details = null;
     $order_items = [];
 
-    // Ambil data pesanan utama dari tabel 'orders'
-    $sql_order = "SELECT o.*, u_customer.username as customer_username, u_cashier.name as cashier_name
+    // Ambil data pesanan utama
+    $sql_order = "SELECT o.*, 
+                         COALESCE(u_customer.username, o.customer_name, 'Guest') as customer_name_final, 
+                         u_cashier.name as cashier_name
                   FROM orders o 
                   LEFT JOIN users u_customer ON o.user_id = u_customer.id
                   LEFT JOIN users u_cashier ON o.cashier_id = u_cashier.id
@@ -40,129 +42,58 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
                 $order_items = $result_items->fetch_all(MYSQLI_ASSOC);
                 $stmt_items->close();
             }
+
+            $response = [
+                'success' => true,
+                'details' => $order_details,
+                'items' => $order_items
+            ];
         }
         $stmt_order->close();
     }
 
-    if (!$order_details) {
-        die("Pesanan tidak ditemukan.");
-    }
-
-    $customer_name = $order_details['customer_username'] ?? $order_details['customer_name'] ?? 'Guest';
-    $cashier_name = $order_details['cashier_name'] ?? 'N/A';
-?>
-    <!DOCTYPE html>
-    <html lang="id">
-
-    <head>
-        <meta charset="UTF-8">
-        <title>Struk Pesanan #<?= $order_details['id'] ?></title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&display=swap');
-
-            body {
-                font-family: 'Inconsolata', monospace;
-                width: 300px;
-                margin: 0 auto;
-            }
-
-            @media print {
-                body {
-                    -webkit-print-color-adjust: exact;
-                }
-
-                .no-print {
-                    display: none;
-                }
-            }
-        </style>
-    </head>
-
-    <body class="bg-gray-100 p-4">
-        <div class="bg-white p-4">
-            <div class="text-center mb-4">
-                <h1 class="text-xl font-bold">NAMA KAFE ANDA</h1>
-                <p class="text-xs">Jl. Alamat Kafe No. 123</p>
-                <p class="text-xs">Telp: 081234567890</p>
-            </div>
-            <div class="text-xs border-t border-dashed border-black pt-2">
-                <div class="flex justify-between"><span>No. Pesanan:</span><span>#<?= $order_details['id'] ?></span></div>
-                <div class="flex justify-between"><span>Tanggal:</span><span><?= date('d/m/y H:i', strtotime($order_details['created_at'])) ?></span></div>
-                <div class="flex justify-between"><span>Pelanggan:</span><span><?= htmlspecialchars($customer_name) ?></span></div>
-                <div class="flex justify-between"><span>Kasir:</span><span><?= htmlspecialchars($cashier_name) ?></span></div>
-            </div>
-            <div class="border-t border-b border-dashed border-black my-2 py-2">
-                <?php foreach ($order_items as $item): ?>
-                    <div class="text-xs mb-1">
-                        <p><?= htmlspecialchars($item['name']) ?></p>
-                        <div class="flex justify-between">
-                            <span><?= $item['quantity'] ?> x <?= number_format($item['price'], 0, ',', '.') ?></span>
-                            <span><?= number_format($item['subtotal'], 0, ',', '.') ?></span>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-            <div class="text-xs space-y-1">
-                <div class="flex justify-between"><span>Subtotal</span><span>Rp <?= number_format($order_details['subtotal'], 0, ',', '.') ?></span></div>
-                <div class="flex justify-between"><span>Diskon</span><span>Rp <?= number_format($order_details['discount_amount'], 0, ',', '.') ?></span></div>
-                <div class="flex justify-between"><span>PPN (11%)</span><span>Rp <?= number_format($order_details['tax'], 0, ',', '.') ?></span></div>
-                <div class="flex justify-between font-bold text-sm mt-1 border-t border-dashed pt-1"><span>TOTAL</span><span>Rp <?= number_format($order_details['total_amount'], 0, ',', '.') ?></span></div>
-                <div class="flex justify-between"><span>Metode Bayar</span><span class="capitalize"><?= htmlspecialchars($order_details['payment_method']) ?></span></div>
-            </div>
-            <div class="text-center text-xs mt-6">
-                <p>Terima kasih atas kunjungan Anda!</p>
-            </div>
-        </div>
-        <div class="text-center mt-4 no-print">
-            <button onclick="window.print()" class="bg-blue-500 text-white px-4 py-2 rounded">Cetak Struk</button>
-            <a href="laporan.php" class="bg-gray-500 text-white px-4 py-2 rounded">Kembali</a>
-        </div>
-    </body>
-
-    </html>
-<?php
+    // Kembalikan response sebagai JSON
+    header('Content-Type: application/json');
+    echo json_encode($response);
     $conn->close();
-    exit(); // Hentikan script agar tidak menampilkan halaman laporan utama
+    exit();
+}
 
-    // --- [BARU] LOGIKA UNTUK CETAK EXCEL (FORMAT CSV) ---
-} elseif (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
-
-    // Ambil rentang tanggal dari URL
+// --- LOGIKA UNTUK CETAK EXCEL (FORMAT CSV) ---
+if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
     $start_date = $_GET['start_date'] ?? date('Y-m-01');
     $end_date = $_GET['end_date'] ?? date('Y-m-d');
 
-    // Set header untuk memberitahu browser agar men-download file
     $filename = "Laporan_Penjualan_" . $start_date . "_sampai_" . $end_date . ".csv";
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
 
-    // Buka output stream PHP untuk menulis file CSV
     $output = fopen('php://output', 'w');
+    fputcsv($output, ['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'Total Bayar', 'Metode Pembayaran', 'Kasir']);
 
-    // Tulis baris header untuk CSV
-    fputcsv($output, ['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'Total Bayar']);
-
-    // Query data pesanan sesuai rentang tanggal (sama seperti di halaman laporan)
-    $sql_export = "SELECT o.id, o.created_at, o.total_amount, 
-                          COALESCE(u.username, o.customer_name) as customer_name
+    // Query untuk ekspor, ditambahkan metode pembayaran dan nama kasir
+    $sql_export = "SELECT o.id, o.created_at, o.total_amount, o.payment_method,
+                          COALESCE(u.username, o.customer_name, 'Guest') as customer_name,
+                          COALESCE(uc.name, 'N/A') as cashier_name
                    FROM orders o
                    LEFT JOIN users u ON o.user_id = u.id
+                   LEFT JOIN users uc ON o.cashier_id = uc.id
                    WHERE DATE(o.created_at) BETWEEN ? AND ?
-                   ORDER BY o.created_at ASC"; // Urutkan dari yang terlama untuk laporan
+                   ORDER BY o.created_at ASC";
 
     if ($stmt_export = $conn->prepare($sql_export)) {
         $stmt_export->bind_param("ss", $start_date, $end_date);
         $stmt_export->execute();
         $result_export = $stmt_export->get_result();
 
-        // Loop melalui setiap baris hasil query dan tulis ke file CSV
         while ($row = $result_export->fetch_assoc()) {
             fputcsv($output, [
                 '#' . $row['id'],
                 date('d-m-Y H:i:s', strtotime($row['created_at'])),
-                $row['customer_name'] ?? 'Guest',
-                $row['total_amount'] // Simpan sebagai angka murni agar mudah dihitung di Excel
+                $row['customer_name'],
+                $row['total_amount'],
+                ucfirst($row['payment_method']),
+                $row['cashier_name']
             ]);
         }
         $stmt_export->close();
@@ -170,13 +101,13 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
 
     fclose($output);
     $conn->close();
-    exit(); // Hentikan script setelah file CSV dibuat
+    exit();
 }
 
-// --- JIKA BUKAN AKSI CETAK, TAMPILKAN HALAMAN LAPORAN BIASA ---
+// --- JIKA BUKAN AKSI DI ATAS, TAMPILKAN HALAMAN LAPORAN BIASA ---
 require_once 'includes/header.php';
 
-// Atur tanggal default: 1 bulan terakhir
+// Atur tanggal default
 $start_date = $_GET['start_date'] ?? date('Y-m-01');
 $end_date = $_GET['end_date'] ?? date('Y-m-d');
 
@@ -188,9 +119,9 @@ $orders_data = [];
 
 // Query untuk mengambil data pesanan
 $sql_orders = "SELECT o.id, o.created_at, o.total_amount, 
-                      COALESCE(u.username, o.customer_name) as customer_name
+                      COALESCE(u.name, o.customer_name, 'Guest') as customer_name
                FROM orders o
-               LEFT JOIN users u ON o.user_id = u.id
+               LEFT JOIN members u ON o.user_id = u.id
                WHERE DATE(o.created_at) BETWEEN ? AND ?
                ORDER BY o.created_at DESC";
 
@@ -244,7 +175,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                     </svg> Filter
                 </button>
             </form>
-            <!-- [DIUBAH] Tombol Cetak PDF menjadi Cetak Excel -->
             <a href="laporan.php?action=cetak_excel&start_date=<?= htmlspecialchars($start_date) ?>&end_date=<?= htmlspecialchars($end_date) ?>" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 shadow">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
@@ -296,27 +226,24 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                     <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Pelanggan</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Bayar (Rp)</th>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
+                    <!-- KOLOM AKSI DIHAPUS -->
                 </tr>
             </thead>
             <tbody>
                 <?php if (!empty($orders_data)): ?>
                     <?php foreach ($orders_data as $order): ?>
-                        <tr>
+                        <!-- [DIUBAH] Tambahkan atribut data-order-id dan class untuk interaksi -->
+                        <tr class="hover:bg-gray-100 cursor-pointer" data-order-id="<?= $order['id'] ?>">
                             <td class="px-5 py-4 border-b border-gray-200 text-sm">#<?= $order['id'] ?></td>
                             <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></td>
                             <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium"><?= htmlspecialchars($order['customer_name'] ?? 'Guest') ?></td>
                             <td class="px-5 py-4 border-b border-gray-200 text-sm text-right font-semibold"><?= number_format($order['total_amount'], 0, ',', '.') ?></td>
-                            <td class="px-5 py-4 border-b border-gray-200 text-sm text-center">
-                                <a href="laporan.php?action=cetak_struk&id=<?= $order['id'] ?>" target="_blank" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-1 px-3 rounded text-xs">
-                                    Cetak Struk
-                                </a>
-                            </td>
+                            <!-- Tombol Aksi Dihapus -->
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="5" class="text-center py-10 text-gray-500">Tidak ada pesanan pada rentang tanggal yang dipilih.</td>
+                        <td colspan="4" class="text-center py-10 text-gray-500">Tidak ada pesanan pada rentang tanggal yang dipilih.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -324,7 +251,138 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
     </div>
 </div>
 
-<!-- [DIHAPUS] Seluruh script JavaScript untuk membuat PDF dihapus karena tidak diperlukan lagi -->
+<!-- [BARU] Modal untuk Detail Pesanan -->
+<div id="detailModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 m-4 animate-fade-in-up">
+        <div class="flex justify-between items-center border-b pb-3 mb-3">
+            <h2 class="text-xl font-bold text-gray-800">Detail Pesanan <span id="modalOrderId" class="text-blue-600"></span></h2>
+            <button id="closeModal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
+        </div>
+        <div id="modalContent" class="text-sm">
+            <!-- Konten detail akan diisi oleh JavaScript -->
+            <div class="text-center py-8">
+                <p class="text-gray-500">Memuat data...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- [BARU] Script JavaScript untuk Modal -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const tableBody = document.querySelector('#report-table tbody');
+        const modal = document.getElementById('detailModal');
+        const closeModalBtn = document.getElementById('closeModal');
+        const modalContent = document.getElementById('modalContent');
+        const modalOrderId = document.getElementById('modalOrderId');
+
+        if (!tableBody || !modal) return;
+
+        // Fungsi untuk membuka modal
+        const openModal = () => modal.classList.remove('hidden');
+
+        // Fungsi untuk menutup modal
+        const closeModal = () => modal.classList.add('hidden');
+
+        // Event listener untuk baris tabel
+        tableBody.addEventListener('click', function(e) {
+            const row = e.target.closest('tr');
+            if (row && row.dataset.orderId) {
+                const orderId = row.dataset.orderId;
+                openModal();
+                // Tampilkan status loading
+                modalOrderId.textContent = `#${orderId}`;
+                modalContent.innerHTML = '<p class="text-center py-8 text-gray-500">Memuat data...</p>';
+
+                // Ambil data dari server
+                fetch(`laporan.php?action=get_order_details&id=${orderId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            renderModalContent(data.details, data.items);
+                        } else {
+                            modalContent.innerHTML = `<p class="text-center py-8 text-red-500">${data.message}</p>`;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching order details:', error);
+                        modalContent.innerHTML = '<p class="text-center py-8 text-red-500">Gagal memuat data. Silakan coba lagi.</p>';
+                    });
+            }
+        });
+
+        // Fungsi untuk merender konten modal
+        function renderModalContent(details, items) {
+            // Format tanggal
+            const orderDate = new Date(details.created_at).toLocaleString('id-ID', {
+                day: '2-digit',
+                month: 'long',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            // Bangun HTML untuk item yang dipesan
+            let itemsHtml = items.map(item => `
+            <div class="flex justify-between items-center py-2 border-b">
+                <div>
+                    <p class="font-semibold">${item.name}</p>
+                    <p class="text-gray-500">${item.quantity} x ${formatRupiah(item.price)}</p>
+                </div>
+                <p class="font-semibold">${formatRupiah(item.subtotal)}</p>
+            </div>
+        `).join('');
+
+            // Bangun HTML untuk keseluruhan konten modal
+            modalContent.innerHTML = `
+            <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-4">
+                <div class="text-gray-600">Tanggal:</div>
+                <div class="font-semibold text-right">${orderDate}</div>
+                <div class="text-gray-600">Pelanggan:</div>
+                <div class="font-semibold text-right">${details.customer_name_final}</div>
+                <div class="text-gray-600">Kasir:</div>
+                <div class="font-semibold text-right">${details.cashier_name || 'N/A'}</div>
+            </div>
+            
+            <h3 class="font-bold mt-4 mb-2 text-gray-700">Rincian Item</h3>
+            <div class="space-y-1 mb-4">
+                ${itemsHtml}
+            </div>
+
+            <div class="space-y-1 text-right text-gray-800">
+                <div class="flex justify-between"><span>Subtotal</span><span>${formatRupiah(details.subtotal)}</span></div>
+                <div class="flex justify-between"><span>Diskon</span><span>- ${formatRupiah(details.discount_amount)}</span></div>
+                <div class="flex justify-between"><span>PPN (11%)</span><span>${formatRupiah(details.tax)}</span></div>
+                <div class="flex justify-between font-bold text-lg border-t pt-2 mt-2">
+                    <span>TOTAL</span>
+                    <span>${formatRupiah(details.total_amount)}</span>
+                </div>
+                 <div class="flex justify-between text-sm text-gray-600">
+                    <span>Metode Bayar</span>
+                    <span class="capitalize">${details.payment_method}</span>
+                </div>
+            </div>
+        `;
+        }
+
+        // Fungsi helper untuk format Rupiah
+        function formatRupiah(angka) {
+            return new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                minimumFractionDigits: 0
+            }).format(angka);
+        }
+
+        // Event listener untuk tombol close dan background modal
+        closeModalBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+    });
+</script>
 
 <?php
 require_once 'includes/footer.php';

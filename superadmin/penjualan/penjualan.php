@@ -3,6 +3,21 @@
 require_once '../includes/header.php';
 require_once '../../db_connect.php';
 
+// Mengambil informasi toko dari database
+$settings = [];
+$settingsSql = "SELECT setting_name, setting_value FROM settings WHERE setting_name IN ('cafe_name', 'cafe_address', 'cafe_phone')";
+if ($settingsResult = $conn->query($settingsSql)) {
+    while ($row = $settingsResult->fetch_assoc()) {
+        $settings[$row['setting_name']] = $row['setting_value'];
+    }
+    $settingsResult->free();
+}
+
+// Menetapkan variabel informasi toko dengan fallback default
+$nama_toko = $settings['cafe_name'] ?? 'Nama Toko Anda';
+$alamat_toko = $settings['cafe_address'] ?? 'Jalan Alamat Toko No. 123';
+$telepon_toko = $settings['cafe_phone'] ?? '0812-3456-7890';
+
 // Ambil daftar semua kasir dari tabel users
 $cashiers = [];
 // Asumsi: pengguna dengan role 'kasir' dianggap sebagai kasir.
@@ -25,16 +40,17 @@ $transactions = [];
  * ==================================================================
  * PEMBARUAN QUERY SQL UNTUK DETAIL PESANAN
  * ==================================================================
- * - Menghilangkan GROUP_CONCAT dan GROUP BY untuk mengambil setiap item pesanan secara individual.
- * - Data ini akan dikelompokkan menggunakan PHP untuk membuat struktur dropdown.
- * - Menambahkan detail item: kuantitas, nama menu, dan harga item.
+ * - Menambahkan LEFT JOIN ke tabel 'members' untuk mengambil nama member.
+ * - Menggunakan IF() untuk memprioritaskan nama member jika ada, jika tidak, gunakan customer_name.
+ * - Menambahkan flag 'is_member' untuk membedakan pelanggan member dan non-member.
  */
 $sql = "SELECT 
             o.id as transaction_id, 
             o.created_at as transaction_date, 
             o.payment_method,
             o.discount_amount as member_discount,
-            o.customer_name as customer_name,
+            IF(o.member_id IS NOT NULL AND mem.name IS NOT NULL, mem.name, o.customer_name) as customer_name_display,
+            (o.member_id IS NOT NULL AND mem.name IS NOT NULL) as is_member,
             cashier.name as cashier_name,
             o.total_amount as total_paid,
             o.status as order_status,
@@ -45,6 +61,7 @@ $sql = "SELECT
         LEFT JOIN users cashier ON o.cashier_id = cashier.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu m ON oi.menu_id = m.id
+        LEFT JOIN members mem ON o.member_id = mem.id
         WHERE DATE(o.created_at) BETWEEN ? AND ?
         ORDER BY o.created_at DESC, o.id ASC";
 
@@ -62,7 +79,8 @@ if ($stmt = $conn->prepare($sql)) {
                     'transaction_date' => $row['transaction_date'],
                     'payment_method' => $row['payment_method'],
                     'member_discount' => $row['member_discount'],
-                    'customer_name' => $row['customer_name'],
+                    'customer_name' => $row['customer_name_display'],
+                    'is_member' => $row['is_member'],
                     'cashier_name' => $row['cashier_name'],
                     'total_paid' => $row['total_paid'],
                     'order_status' => $row['order_status'],
@@ -148,9 +166,9 @@ $jumlah_transaksi = count($grouped_transactions);
     <div class="mb-8">
         <div class="bg-white p-6 rounded-xl shadow-lg">
             <h2 class="text-xl font-bold text-gray-800 mb-4">Daftar Kasir Terdaftar</h2>
-            <?php if (!empty($cashiers)): ?>
+            <?php if (!empty($cashiers)) : ?>
                 <div class="flex flex-wrap gap-x-6 gap-y-3">
-                    <?php foreach ($cashiers as $cashierName): ?>
+                    <?php foreach ($cashiers as $cashierName) : ?>
                         <span class="bg-gray-200 text-gray-800 text-sm font-medium px-4 py-2 rounded-full flex items-center">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-circle mr-2" viewBox="0 0 16 16">
                                 <path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
@@ -160,7 +178,7 @@ $jumlah_transaksi = count($grouped_transactions);
                         </span>
                     <?php endforeach; ?>
                 </div>
-            <?php else: ?>
+            <?php else : ?>
                 <p class="text-gray-500">Tidak ada data kasir yang ditemukan.</p>
             <?php endif; ?>
         </div>
@@ -184,24 +202,20 @@ $jumlah_transaksi = count($grouped_transactions);
                         <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Diskon (Rp)</th>
                         <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Bayar (Rp)</th>
                         <th class="px-5 py-3 border-b-2 border-gray-200 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                        <th class="px-5 py-3 border-b-2 border-gray-200 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
                     </tr>
                 </thead>
                 <tbody id="transaction-table-body">
-                    <?php if (!empty($grouped_transactions)): ?>
-                        <?php foreach ($grouped_transactions as $tx_id => $tx): ?>
+                    <?php if (!empty($grouped_transactions)) : ?>
+                        <?php foreach ($grouped_transactions as $tx_id => $tx) : ?>
                             <!-- Baris Utama (Bisa Diklik) -->
-                            <tr class="hover:bg-gray-100 transaction-row cursor-pointer"
+                            <tr class="transaction-row cursor-pointer"
+                                onclick="toggleDetails(this)"
                                 data-id="#<?= $tx['transaction_id'] ?>"
                                 data-name="<?= strtolower(htmlspecialchars($tx['customer_name'] ?? 'guest')) ?>"
-                                data-cashier="<?= strtolower(htmlspecialchars($tx['cashier_name'] ?? '')) ?>"
-                                onclick="toggleDetails(this)">
+                                data-cashier="<?= strtolower(htmlspecialchars($tx['cashier_name'] ?? '')) ?>">
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm">
-                                    <span class="flex items-center">
-                                        #<?= $tx['transaction_id'] ?>
-                                        <svg class="dropdown-icon w-4 h-4 ml-2 text-gray-500 transition-transform transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                                        </svg>
-                                    </span>
+                                    #<?= $tx['transaction_id'] ?>
                                 </td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($tx['transaction_date'])) ?></td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium text-gray-900"><?= htmlspecialchars($tx['customer_name'] ?? 'Guest') ?></td>
@@ -215,7 +229,12 @@ $jumlah_transaksi = count($grouped_transactions);
                                     ?>
                                 </td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm text-gray-600">
-                                    <?= count($tx['items']) ?> item
+                                    <span class="flex items-center">
+                                        <?= count($tx['items']) ?> item
+                                        <svg class="dropdown-icon w-4 h-4 ml-2 text-gray-500 transition-transform transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                        </svg>
+                                    </span>
                                 </td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm capitalize"><?= htmlspecialchars($tx['payment_method'] ?? '-') ?></td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm text-right text-red-600 font-semibold"><?= number_format($tx['member_discount'] ?? 0, 0, ',', '.') ?></td>
@@ -240,16 +259,25 @@ $jumlah_transaksi = count($grouped_transactions);
                                         <?= htmlspecialchars($tx['order_status']) ?>
                                     </span>
                                 </td>
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm text-center">
+                                    <button onclick="event.stopPropagation(); printReceipt('<?= $tx['transaction_id'] ?>')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-1 px-3 rounded inline-flex items-center text-xs">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-printer-fill mr-1" viewBox="0 0 16 16">
+                                            <path d="M5 1a2 2 0 0 0-2 2v1h10V3a2 2 0 0 0-2-2H5zm6 8H5a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1z" />
+                                            <path d="M0 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1v-2a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v2H2a2 2 0 0 1-2-2V7zm2.5 1a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z" />
+                                        </svg>
+                                        Cetak
+                                    </button>
+                                </td>
                             </tr>
                             <!-- Baris Detail (Tersembunyi) -->
                             <tr class="transaction-details-row bg-gray-50" style="display: none;">
-                                <td colspan="9" class="p-4 border-b border-gray-200">
+                                <td colspan="10" class="p-4 border-b border-gray-200">
                                     <div class="max-w-md">
                                         <h4 class="text-md font-bold text-gray-700 mb-2">Detail Pesanan:</h4>
-                                        <?php if (!empty($tx['items'])): ?>
+                                        <?php if (!empty($tx['items'])) : ?>
                                             <?php $subtotal = 0; ?>
                                             <ul class="space-y-1 text-sm text-gray-600">
-                                                <?php foreach ($tx['items'] as $item): ?>
+                                                <?php foreach ($tx['items'] as $item) : ?>
                                                     <?php $subtotal += $item['quantity'] * $item['item_price']; ?>
                                                     <li class="flex justify-between">
                                                         <span>
@@ -265,7 +293,6 @@ $jumlah_transaksi = count($grouped_transactions);
                                             <div class="text-sm text-gray-800 space-y-1">
                                                 <?php
                                                 $ppn = $subtotal * 0.11; // PPN 11%
-                                                $total_biaya_detail = $subtotal + $ppn;
                                                 ?>
                                                 <div class="flex justify-between">
                                                     <span class="font-semibold">Subtotal:</span>
@@ -275,21 +302,30 @@ $jumlah_transaksi = count($grouped_transactions);
                                                     <span class="font-semibold">PPN (11%):</span>
                                                     <span class="font-mono">Rp <?= number_format($ppn, 0, ',', '.') ?></span>
                                                 </div>
+
+                                                <?php if ($tx['is_member'] && $tx['member_discount'] > 0) : ?>
+                                                    <div class="flex justify-between text-red-600">
+                                                        <span class="font-semibold">Diskon Member:</span>
+                                                        <span class="font-mono">- Rp <?= number_format($tx['member_discount'], 0, ',', '.') ?></span>
+                                                    </div>
+                                                <?php endif; ?>
+
+                                                <hr class="my-1 border-gray-300">
                                                 <div class="flex justify-between font-bold text-md mt-1">
-                                                    <span>Total Biaya:</span>
-                                                    <span class="font-mono">Rp <?= number_format($total_biaya_detail, 0, ',', '.') ?></span>
+                                                    <span>Total Bayar:</span>
+                                                    <span class="font-mono">Rp <?= number_format($tx['total_paid'], 0, ',', '.') ?></span>
                                                 </div>
                                             </div>
-                                        <?php else: ?>
+                                        <?php else : ?>
                                             <p class="text-sm text-gray-500">Tidak ada item dalam pesanan ini.</p>
                                         <?php endif; ?>
                                     </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
-                    <?php else: ?>
+                    <?php else : ?>
                         <tr>
-                            <td colspan="9" class="text-center py-10 text-gray-500">Tidak ada transaksi pada rentang tanggal yang dipilih.</td>
+                            <td colspan="10" class="text-center py-10 text-gray-500">Tidak ada transaksi pada rentang tanggal yang dipilih.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -299,17 +335,143 @@ $jumlah_transaksi = count($grouped_transactions);
 </div>
 
 <script>
+    // Menyimpan data transaksi dan info toko dalam variabel JavaScript
+    const transactionsData = <?= json_encode(array_values($grouped_transactions)); ?>;
+    const NAMA_TOKO = "<?= addslashes($nama_toko) ?>";
+    const ALAMAT_TOKO = "<?= addslashes($alamat_toko) ?>";
+    const TELEPON_TOKO = "<?= addslashes($telepon_toko) ?>";
+
     function toggleDetails(rowElement) {
         const detailsRow = rowElement.nextElementSibling;
         const icon = rowElement.querySelector('.dropdown-icon');
 
+        // Tutup semua baris lain yang mungkin terbuka
+        document.querySelectorAll('.transaction-row.is-open').forEach(openRow => {
+            if (openRow !== rowElement) {
+                openRow.nextElementSibling.style.display = 'none';
+                openRow.classList.remove('is-open');
+                const openIcon = openRow.querySelector('.dropdown-icon');
+                if (openIcon) openIcon.classList.remove('rotate-180');
+            }
+        });
+
+        // Buka atau tutup baris yang diklik
         if (detailsRow.style.display === 'none') {
             detailsRow.style.display = ''; // Menampilkan baris detail
-            icon.classList.add('rotate-180');
+            rowElement.classList.add('is-open');
+            if (icon) icon.classList.add('rotate-180');
         } else {
             detailsRow.style.display = 'none'; // Menyembunyikan baris detail
-            icon.classList.remove('rotate-180');
+            rowElement.classList.remove('is-open');
+            if (icon) icon.classList.remove('rotate-180');
         }
+    }
+
+
+    function printReceipt(transactionId) {
+        const tx = transactionsData.find(t => t.transaction_id == transactionId);
+        if (!tx) {
+            // Seharusnya tidak terjadi, tapi sebagai pengaman
+            return;
+        }
+
+        let subtotal = 0;
+        let itemsHtml = tx.items.map(item => {
+            const numericPrice = parseFloat(item.item_price);
+            const numericQty = parseInt(item.quantity, 10);
+            const itemTotal = numericQty * numericPrice;
+            subtotal += itemTotal;
+            // Format baru: Nama item di satu baris, detail harga di baris bawahnya
+            return `
+            <tr>
+                <td colspan="4" style="padding-top: 5px;">${item.menu_name}</td>
+            </tr>
+            <tr>
+                <td colspan="2" style="padding-left: 15px;">${numericQty} x ${number_format(numericPrice)}</td>
+                <td colspan="2" style="text-align: right;">${number_format(itemTotal)}</td>
+            </tr>
+        `;
+        }).join('');
+
+        const ppn = Math.round(subtotal * 0.11);
+        const customerLabel = tx.is_member ? 'Member' : 'Pelanggan';
+
+        const receiptContent = `
+        <html>
+            <head>
+                <title>Struk Transaksi #${tx.transaction_id}</title>
+                <style>
+                    body { font-family: 'Courier New', monospace; font-size: 12px; margin: 0; padding: 10px; }
+                    .container { width: 300px; margin: auto; }
+                    h2, p { text-align: center; margin: 5px 0; }
+                    hr { border: none; border-top: 1px dashed #000; margin: 8px 0; }
+                    table { width: 100%; border-collapse: collapse; }
+                    th, td { padding: 1px 0; }
+                    .text-right { text-align: right; }
+                    .footer { text-align: center; margin-top: 15px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>${NAMA_TOKO}</h2>
+                    <p>${ALAMAT_TOKO}</p>
+                    <p>Telp: ${TELEPON_TOKO}</p>
+                    <hr>
+                    <p>ID: #${tx.transaction_id}<br>
+                    Kasir: ${tx.cashier_name || '-'}<br>
+                    ${customerLabel}: ${tx.customer_name || 'Guest'}<br>
+                    Tanggal: ${new Date(tx.transaction_date).toLocaleString('id-ID')}</p>
+                    <hr>
+                    <table>
+                        <tbody>
+                            ${itemsHtml}
+                        </tbody>
+                    </table>
+                    <hr>
+                    <table>
+                        <tbody>
+                            <tr>
+                                <td>Subtotal</td>
+                                <td class="text-right">Rp ${number_format(subtotal)}</td>
+                            </tr>
+                            <tr>
+                                <td>PPN (11%)</td>
+                                <td class="text-right">Rp ${number_format(ppn)}</td>
+                            </tr>
+                            <tr>
+                                <td>Diskon</td>
+                                <td class="text-right">- Rp ${number_format(tx.member_discount)}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Total Bayar</strong></td>
+                                <td class="text-right"><strong>Rp ${number_format(tx.total_paid)}</strong></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <hr>
+                    <p class="footer">Terima kasih atas kunjungan Anda!</p>
+                </div>
+            </body>
+        </html>
+    `;
+
+        const printWindow = window.open('', '_blank', 'width=320,height=500');
+        printWindow.document.write(receiptContent);
+        printWindow.document.close();
+        printWindow.focus();
+    }
+
+    // Helper function untuk format angka
+    function number_format(number) {
+        const numericValue = parseFloat(number);
+        if (isNaN(numericValue)) {
+            return '0';
+        }
+        const options = {
+            maximumFractionDigits: 0,
+            minimumFractionDigits: 0
+        };
+        return new Intl.NumberFormat('id-ID', options).format(numericValue);
     }
 
     document.getElementById('searchInput').addEventListener('keyup', function() {
@@ -326,7 +488,6 @@ $jumlah_transaksi = count($grouped_transactions);
                 row.style.display = '';
             } else {
                 row.style.display = 'none';
-                // Pastikan baris detail juga tersembunyi saat filter
                 if (detailsRow && detailsRow.classList.contains('transaction-details-row')) {
                     detailsRow.style.display = 'none';
                     const icon = row.querySelector('.dropdown-icon');

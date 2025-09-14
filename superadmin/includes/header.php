@@ -82,6 +82,10 @@ try {
             <a href="<?= BASE_URL ?>superadmin/kelolamenu.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
                 <i class="fas fa-book-open w-6 mr-3"></i> Kelola Menu
             </a>
+            <!-- [DITAMBAHKAN] Link untuk Kelola Banner -->
+            <a href="<?= BASE_URL ?>superadmin/banner/kelola_banner.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                <i class="fas fa-images w-6 mr-3"></i> Kelola Banner
+            </a>
             <a href="<?= BASE_URL ?>superadmin/pelanggan/pelanggan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
                 <i class="fas fa-users w-6 mr-3"></i> Pelanggan
             </a>
