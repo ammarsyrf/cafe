@@ -98,7 +98,7 @@ if (isset($_GET['ajax'])) {
                     <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
                     <p class="text-sm text-gray-600 mb-2">Tipe:
                         <span class="font-semibold">
-                            <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                            <?php if (isset($order['order_type']) && $order['order_type'] === 'take-away') : ?>
                                 Take Away
                             <?php else : ?>
                                 Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
@@ -145,7 +145,7 @@ if (isset($_GET['ajax'])) {
                     <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
                     <p class="text-sm text-gray-600 mb-2">Tipe:
                         <span class="font-semibold">
-                            <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                            <?php if (isset($order['order_type']) && $order['order_type'] === 'take-away') : ?>
                                 Take Away
                             <?php else : ?>
                                 Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
@@ -421,7 +421,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                             <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
                             <p class="text-sm text-gray-600 mb-2">Tipe:
                                 <span class="font-semibold">
-                                    <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                                    <?php if (isset($order['order_type']) && $order['order_type'] === 'take-away') : ?>
                                         Take Away
                                     <?php else : ?>
                                         Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
@@ -469,7 +469,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                             <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
                             <p class="text-sm text-gray-600 mb-2">Tipe:
                                 <span class="font-semibold">
-                                    <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                                    <?php if (isset($order['order_type']) && $order['order_type'] === 'take-away') : ?>
                                         Take Away
                                     <?php else : ?>
                                         Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
@@ -562,7 +562,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
         <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
         <p class="text-sm text-gray-600 mb-2">Tipe:
             <span class="font-semibold">
-                <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                <?php if (isset($order['order_type']) && $order['order_type'] === 'take-away') : ?>
                     Take Away
                 <?php else : ?>
                     Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
@@ -609,7 +609,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                     <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type di Struk -->
                     <tr>
                         <td>Tipe</td>
-                        <td style="text-align: right;"><?= (isset($order['order_type']) && $order['order_type'] === 'take_away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></td>
+                        <td style="text-align: right;"><?= (isset($order['order_type']) && $order['order_type'] === 'take-away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></td>
                     </tr>
                 </table>
                 <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
@@ -783,7 +783,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
 
             // [MODIFIKASI] Menampilkan Tipe berdasarkan order_type di detail view
             let infoHTML = '';
-            if (order_type === 'take_away') {
+            if (order_type === 'take-away') {
                 infoHTML += `<div class="mb-2 text-sm"><span class="font-semibold text-gray-700">Tipe:</span> Take Away</div>`;
             } else {
                 infoHTML += `<div class="mb-2 text-sm"><span class="font-semibold text-gray-700">Tipe:</span> Dine-In (Meja ${table_number})</div>`;
