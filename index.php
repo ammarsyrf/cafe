@@ -18,6 +18,15 @@ if (!isset($_SESSION['cart'])) {
     $_SESSION['cart'] = [];
 }
 
+if (isset($_GET['meja'])) {
+    $encodedIdentifier = $_GET['meja'];
+    // Decode kembali dari Base64
+    $tableIdentifier = base64_decode($encodedIdentifier);
+
+    // Simpan nomor meja ke dalam session agar bisa digunakan saat checkout
+    $_SESSION['nomor_meja'] = $tableIdentifier;
+}
+
 // --- FUNGSI PERHITUNGAN DISKON ---
 function calculate_discount($subtotal, $is_member)
 {
@@ -79,7 +88,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
 
     switch ($action) {
         case 'add_to_cart':
-            $sql = "SELECT * FROM menu WHERE id = ? AND is_available = TRUE";
+            // Ambil harga normal dan harga diskon
+            $sql = "SELECT id, name, price, discount_price, stock, image_url FROM menu WHERE id = ? AND is_available = TRUE";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("i", $menu_id);
             $stmt->execute();
@@ -90,13 +100,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
                 $cart_quantity = isset($_SESSION['cart'][$menu_id]['quantity']) ? $_SESSION['cart'][$menu_id]['quantity'] : 0;
 
                 if ($current_stock > $cart_quantity) {
+                    // Tentukan harga yang akan digunakan (harga diskon jika ada dan valid)
+                    $price_to_use = (isset($item['discount_price']) && $item['discount_price'] > 0) ? $item['discount_price'] : $item['price'];
+
                     if (isset($_SESSION['cart'][$menu_id])) {
                         $_SESSION['cart'][$menu_id]['quantity']++;
                     } else {
                         $_SESSION['cart'][$menu_id] = [
                             'id' => $item['id'],
                             'name' => $item['name'],
-                            'price' => $item['price'],
+                            'price' => $price_to_use, // Gunakan harga yang sudah ditentukan
+                            'original_price' => $item['price'], // Simpan harga asli untuk display
                             'quantity' => 1,
                             'image' => $item['image_url']
                         ];
@@ -195,6 +209,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         // Simpan item pesanan dan kurangi stok
         foreach ($_SESSION['cart'] as $item) {
+            // Harga yang disimpan adalah harga yang ada di keranjang (bisa harga normal/diskon)
             $sql = "INSERT INTO order_items (order_id, menu_id, quantity, price) VALUES (?, ?, ?, ?)";
             $stmt_item = $conn->prepare($sql);
             $stmt_item->bind_param("iiid", $order_id, $item['id'], $item['quantity'], $item['price']);
@@ -224,10 +239,11 @@ function get_category_icon($category)
 {
     $category_lower = strtolower($category);
     $icons = [
+        'promo'   => 'fas fa-star', // [DITAMBAHKAN] Ikon untuk kategori promo
         'makanan' => 'fas fa-utensils',
         'minuman' => 'fas fa-wine-glass',
-        'kopi' => 'fas fa-coffee',
-        'snack' => 'fas fa-cookie-bite',
+        'kopi'    => 'fas fa-coffee',
+        'snack'   => 'fas fa-cookie-bite',
         'dessert' => 'fas fa-ice-cream',
     ];
 
@@ -242,16 +258,54 @@ function get_category_icon($category)
 // Data untuk render halaman
 $table_id = isset($_GET['table']) ? (int)$_GET['table'] : 1;
 $menu_items = [];
-$sql = "SELECT * FROM menu WHERE is_available = TRUE ORDER BY category, name";
+
+// [DIPERBARUI] Query SQL untuk memberlakukan urutan kategori spesifik.
+$sql = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available
+        FROM menu
+        WHERE is_available = TRUE
+        ORDER BY
+            CASE
+                WHEN category = 'makanan' THEN 1
+                WHEN category = 'minuman' THEN 2
+                WHEN category = 'snack'   THEN 3
+                WHEN category = 'others'  THEN 4
+                ELSE 99 -- Kategori lain akan diletakkan di akhir
+            END,
+            name ASC";
+
 $result = $conn->query($sql);
-while ($row = $result->fetch_assoc()) {
-    $menu_items[] = $row;
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $menu_items[] = $row;
+    }
 }
 
-$categories = [];
+// [DIPERBARUI] Logika pengelompokan yang disederhanakan. Urutan sekarang ditangani oleh query SQL.
+$promo_items = [];
+$categories_grouped = [];
 foreach ($menu_items as $item) {
-    $categories[$item['category']][] = $item;
+    // Kelompokkan item ke dalam kategorinya masing-masing
+    $categories_grouped[$item['category']][] = $item;
+
+    // Jika item memiliki diskon yang valid, tambahkan juga ke daftar promo
+    if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) {
+        $promo_items[] = $item;
+    }
 }
+
+// Buat array final untuk ditampilkan
+$display_categories = [];
+
+// Tambahkan kategori 'Promo' di bagian atas HANYA jika ada item yang didiskon
+if (!empty($promo_items)) {
+    $display_categories['promo'] = $promo_items;
+}
+
+// Gabungkan kategori promo dengan kategori lain, yang sudah diurutkan oleh SQL
+// Ini akan menjaga urutan: Makanan, Minuman, Snack, Others, dll.
+$display_categories = array_merge($display_categories, $categories_grouped);
+
+
 $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
 ?>
 <!DOCTYPE html>
@@ -345,7 +399,7 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
     <div id="category-nav" class="bg-white sticky top-[68px] z-30 shadow-sm py-3">
         <div class="container mx-auto px-4">
             <div class="flex space-x-3 overflow-x-auto whitespace-nowrap">
-                <?php foreach ($categories as $category => $items) : ?>
+                <?php foreach ($display_categories as $category => $items) : ?>
                     <a href="#category-<?= strtolower(htmlspecialchars($category)) ?>" class="category-nav-item flex items-center space-x-2 text-sm md:text-base font-semibold text-gray-600 bg-gray-100 hover:bg-blue-100 hover:text-blue-700 rounded-full px-4 py-2 transition-all duration-300 shadow-sm">
                         <i class="<?= get_category_icon($category) ?> w-5 text-center"></i>
                         <span><?= htmlspecialchars(ucfirst($category)) ?></span>
@@ -358,20 +412,32 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
     <!-- Main Content -->
     <main class="container mx-auto px-4 py-8">
         <div class="space-y-12">
-            <?php foreach ($categories as $category => $items) : ?>
+            <?php foreach ($display_categories as $category => $items) : ?>
                 <section id="category-<?= strtolower(htmlspecialchars($category)) ?>" class="scroll-mt-32">
                     <h2 class="text-2xl md:text-3xl font-bold text-gray-800 capitalize mb-6"><?= htmlspecialchars($category) ?></h2>
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         <?php foreach ($items as $item) : ?>
                             <div class="bg-white rounded-2xl shadow-md overflow-hidden flex flex-col group">
-                                <div class="h-48 overflow-hidden">
+                                <div class="h-48 overflow-hidden relative">
                                     <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transform transition-transform duration-300 group-hover:scale-110">
+                                    <!-- Promo badge -->
+                                    <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
+                                        <div class="absolute top-2 right-2 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-full animate-pulse">PROMO</div>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="p-5 flex-grow flex flex-col">
                                     <h3 class="text-lg font-bold text-gray-800 mb-1"><?= htmlspecialchars($item['name']) ?></h3>
                                     <p class="text-gray-500 text-sm mb-4 flex-grow"><?= htmlspecialchars($item['description']) ?></p>
                                     <div class="flex items-center justify-between mt-auto">
-                                        <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['price'], 0, ',', '.') ?></span>
+                                        <!-- Price display logic -->
+                                        <div class="flex flex-col items-start">
+                                            <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
+                                                <del class="text-gray-500 text-sm">Rp<?= number_format($item['price'], 0, ',', '.') ?></del>
+                                                <span class="text-red-600 font-extrabold text-lg">Rp<?= number_format($item['discount_price'], 0, ',', '.') ?></span>
+                                            <?php else : ?>
+                                                <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['price'], 0, ',', '.') ?></span>
+                                            <?php endif; ?>
+                                        </div>
                                         <form class="add-to-cart-form">
                                             <input type="hidden" name="action" value="add_to_cart">
                                             <input type="hidden" name="menu_id" value="<?= $item['id'] ?>">
@@ -740,27 +806,37 @@ $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
                     emptyCartMessage.classList.add('hidden');
                     cartSummary.classList.remove('hidden');
 
-                    cartContent.innerHTML = data.cart_items.map(item => `
-                    <div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm">
-                        <div class="flex items-start space-x-3">
-                            <img src="${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md">
-                            <div>
-                                <p class="font-bold text-gray-800 text-md">${item.name}</p>
-                                <p class="text-sm text-gray-600">${formatCurrency(item.price)}</p>
-                            </div>
-                        </div>
-                        <form class="update-cart-form flex flex-col items-end">
-                            <div class="flex items-center rounded-full border bg-gray-50 overflow-hidden">
-                                <button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button>
-                                <input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly>
-                                <button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button>
-                            </div>
-                            <input type="hidden" name="action" value="update_quantity">
-                            <input type="hidden" name="menu_id" value="${item.id}">
-                            <input type="hidden" name="is_ajax" value="1">
-                        </form>
-                    </div>
-                    `).join('');
+                    cartContent.innerHTML = data.cart_items.map(item => {
+                        // Logic to display discounted price in cart drawer
+                        const priceDisplay = (item.original_price && item.price < item.original_price) ?
+                            `<div>
+                                   <p class="font-bold text-red-600 text-md">${formatCurrency(item.price)}</p>
+                                   <del class="text-xs text-gray-500">${formatCurrency(item.original_price)}</del>
+                                  </div>` :
+                            `<p class="font-bold text-gray-800 text-md">${formatCurrency(item.price)}</p>`;
+
+                        return `
+                           <div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm">
+                               <div class="flex items-start space-x-3">
+                                   <img src="${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md">
+                                   <div>
+                                       <p class="font-bold text-gray-800 text-md">${item.name}</p>
+                                       ${priceDisplay}
+                                   </div>
+                               </div>
+                               <form class="update-cart-form flex flex-col items-end">
+                                   <div class="flex items-center rounded-full border bg-gray-50 overflow-hidden">
+                                       <button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button>
+                                       <input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly>
+                                       <button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button>
+                                   </div>
+                                   <input type="hidden" name="action" value="update_quantity">
+                                   <input type="hidden" name="menu_id" value="${item.id}">
+                                   <input type="hidden" name="is_ajax" value="1">
+                               </form>
+                           </div>
+                           `
+                    }).join('');
 
                     document.getElementById('cart-subtotal').textContent = formatCurrency(data.subtotal);
                     document.getElementById('cart-ppn').textContent = formatCurrency(data.ppn);

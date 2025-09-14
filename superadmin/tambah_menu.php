@@ -1,6 +1,11 @@
 <?php
 // File: superadmin/tambah_menu.php
 
+// Memulai session jika belum ada
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
 // Panggil koneksi DB terlebih dahulu untuk logika di bawah
 require_once '../db_connect.php';
 
@@ -10,7 +15,9 @@ $message = '';
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $name = mysqli_real_escape_string($conn, $_POST['name']);
     $description = mysqli_real_escape_string($conn, $_POST['description']);
-    $price = (int)$_POST['price'];
+    $price = (float)$_POST['price'];
+    // [MODIFIED] Ambil harga diskon, set ke NULL jika kosong
+    $discount_price = !empty($_POST['discount_price']) ? (float)$_POST['discount_price'] : null;
     $category = mysqli_real_escape_string($conn, $_POST['category']);
     $stock = (int)$_POST['stock'];
     $is_available = isset($_POST['is_available']) ? 1 : 0;
@@ -55,12 +62,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 
     if (empty($message)) {
-        $sql = "INSERT INTO menu (name, description, price, category, stock, image_url, is_available) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        // [MODIFIED] Query INSERT diubah untuk menyertakan discount_price
+        $sql = "INSERT INTO menu (name, description, price, discount_price, category, stock, image_url, is_available) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         if ($stmt = $conn->prepare($sql)) {
-            $stmt->bind_param("ssisisi", $name, $description, $price, $category, $stock, $image_path, $is_available);
+            // [MODIFIED] Bind parameter diubah (ssddsi si -> string, string, double, double, string, integer, string, integer)
+            $stmt->bind_param("ssddissi", $name, $description, $price, $discount_price, $category, $stock, $image_path, $is_available);
             if ($stmt->execute()) {
                 // Redirect sekarang bisa berjalan tanpa error
-                header("Location: kelolamenu.php?status=add_success");
+                $_SESSION['success_message'] = "Menu '{$name}' berhasil ditambahkan!";
+                header("Location: kelolamenu.php");
                 exit();
             } else {
                 $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>Error: " . $stmt->error . "</div>";
@@ -74,11 +84,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 require_once 'includes/header.php';
 ?>
 
-<div class="container mx-auto">
+<div class="container mx-auto p-4 md:p-6">
     <?php if (!empty($message)) echo $message; ?>
 
     <form action="tambah_menu.php" method="POST" enctype="multipart/form-data">
-        <div class="bg-white p-8 rounded-xl shadow-lg">
+        <div class="bg-white p-8 rounded-xl shadow-lg max-w-4xl mx-auto">
             <div class="flex justify-between items-center mb-6">
                 <h1 class="text-3xl font-bold text-gray-800">Tambah Menu Baru</h1>
                 <div>
@@ -103,9 +113,16 @@ require_once 'includes/header.php';
                         <label for="name" class="block text-sm font-medium text-gray-700">Nama Menu</label>
                         <input type="text" name="name" id="name" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
                     </div>
-                    <div>
-                        <label for="price" class="block text-sm font-medium text-gray-700">Harga (Rp)</label>
-                        <input type="number" name="price" id="price" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="price" class="block text-sm font-medium text-gray-700">Harga Normal (Rp)</label>
+                            <input type="number" name="price" id="price" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" step="0.01">
+                        </div>
+                        <!-- [ADDED] Input untuk Harga Diskon -->
+                        <div>
+                            <label for="discount_price" class="block text-sm font-medium text-gray-700">Harga Diskon (Rp) <span class="text-xs text-gray-500">- Opsional</span></label>
+                            <input type="number" name="discount_price" id="discount_price" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" step="0.01" placeholder="Kosongkan jika tidak diskon">
+                        </div>
                     </div>
                     <div>
                         <label for="category" class="block text-sm font-medium text-gray-700">Kategori</label>
@@ -149,7 +166,7 @@ require_once 'includes/header.php';
             previewContainer.innerHTML = ''; // Hapus teks placeholder
             const img = document.createElement('img');
             img.src = URL.createObjectURL(file);
-            img.classList.add('max-h-full', 'max-w-full', 'rounded-lg');
+            img.classList.add('max-h-full', 'max-w-full', 'rounded-lg', 'object-cover');
             previewContainer.appendChild(img);
         }
     });

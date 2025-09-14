@@ -94,6 +94,11 @@ try {
             <a href="<?= BASE_URL ?>superadmin/ulasan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
                 <i class="fas fa-star w-6 mr-3"></i> Ulasan
             </a>
+            <!-- PENAMBAHAN FITUR BARCODE GENERATOR -->
+            <a href="<?= BASE_URL ?>superadmin/barcode_generator.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                <i class="fas fa-qrcode w-6 mr-3"></i> Barcode Generator
+            </a>
+            <!-- AKHIR PENAMBAHAN -->
             <a href="<?= BASE_URL ?>superadmin/pengaturan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
                 <i class="fas fa-cog w-6 mr-3"></i> Pengaturan
             </a>

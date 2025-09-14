@@ -9,9 +9,11 @@ require_once 'includes/header.php';
 // Hubungkan ke database
 require_once '../db_connect.php';
 
-// Ambil semua data menu dari database
+// [MODIFIED] Ambil semua data menu dari database, termasuk harga diskon
 $menu_items = [];
-$sql = "SELECT id, name, description, price, category, stock, image_url, is_available FROM menu ORDER BY name ASC";
+// NOTE: Pastikan Anda sudah menambahkan kolom `discount_price` pada tabel `menu` Anda.
+// Anda bisa menggunakan query SQL ini: ALTER TABLE menu ADD COLUMN discount_price DECIMAL(10, 2) DEFAULT NULL;
+$sql = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available FROM menu ORDER BY name ASC";
 $result = $conn->query($sql);
 if ($result && $result->num_rows > 0) {
     while ($row = $result->fetch_assoc()) {
@@ -80,6 +82,14 @@ if (isset($_SESSION['error_message'])) {
                     <!-- Gambar Menu -->
                     <div class="h-48 bg-gray-200 flex items-center justify-center relative">
                         <img src="../<?= !empty($item['image_url']) ? htmlspecialchars($item['image_url']) : 'https://placehold.co/400x300/e2e8f0/64748b?text=Gambar' ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover">
+
+                        <!-- [MODIFIED] Badge Diskon -->
+                        <?php if (isset($item['discount_price']) && $item['discount_price'] > 0): ?>
+                            <span class="absolute top-2 left-2 py-1 px-3 text-xs font-bold rounded-full bg-red-600 text-white animate-pulse">
+                                DISKON!
+                            </span>
+                        <?php endif; ?>
+
                         <span class="absolute top-2 right-2 py-1 px-3 text-xs font-semibold rounded-full <?= $item['is_available'] ? 'bg-green-500 text-white' : 'bg-red-500 text-white' ?>">
                             <?= $item['is_available'] ? 'Tersedia' : 'Habis' ?>
                         </span>
@@ -88,7 +98,17 @@ if (isset($_SESSION['error_message'])) {
                     <div class="p-5 flex-grow">
                         <h3 class="text-xl font-bold text-gray-800 mb-2 truncate"><?= htmlspecialchars($item['name']) ?></h3>
                         <p class="text-sm text-gray-600 mb-3 capitalize">Kategori: <?= htmlspecialchars($item['category']) ?></p>
-                        <p class="text-lg font-semibold text-blue-600 mb-3">Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+
+                        <!-- [MODIFIED] Tampilkan Harga Normal dan Diskon -->
+                        <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']): ?>
+                            <div class="mb-3">
+                                <del class="text-sm text-gray-500">Rp <?= number_format($item['price'], 0, ',', '.') ?></del>
+                                <p class="text-lg font-semibold text-red-600">Rp <?= number_format($item['discount_price'], 0, ',', '.') ?></p>
+                            </div>
+                        <?php else: ?>
+                            <p class="text-lg font-semibold text-blue-600 mb-3">Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+                        <?php endif; ?>
+
                         <p class="text-sm font-medium <?= $item['stock'] <= 5 && $item['stock'] > 0 ? 'text-yellow-600' : ($item['stock'] == 0 ? 'text-red-600' : 'text-gray-700') ?>">
                             Stok: <?= $item['stock'] ?>
                         </p>

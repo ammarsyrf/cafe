@@ -26,7 +26,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $id = (int)$_POST['id'];
     $name = $_POST['name'];
     $description = $_POST['description'];
-    $price = (int)$_POST['price'];
+    $price = (float)$_POST['price'];
+    // [MODIFIED] Ambil harga diskon. Jika kosong atau 0, simpan sebagai NULL di database.
+    $discount_price = !empty($_POST['discount_price']) ? (float)$_POST['discount_price'] : null;
     $category = $_POST['category'];
     $stock = (int)$_POST['stock'];
     $is_available = isset($_POST['is_available']) ? 1 : 0;
@@ -70,17 +72,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     // Lanjutkan update ke database jika tidak ada error dari proses unggah
     if (empty($message)) {
-        $sql_update = "UPDATE menu SET name=?, description=?, price=?, category=?, stock=?, image_url=?, is_available=? WHERE id=?";
+        // [MODIFIED] Query UPDATE diubah untuk menyertakan discount_price
+        $sql_update = "UPDATE menu SET name=?, description=?, price=?, discount_price=?, category=?, stock=?, image_url=?, is_available=? WHERE id=?";
         if ($stmt_update = $conn->prepare($sql_update)) {
-            $stmt_update->bind_param("ssisissi", $name, $description, $price, $category, $stock, $image_path, $is_available, $id);
+            // [FIXED] Bind parameter diubah ke "ssddsisii" agar tipe data sesuai
+            $stmt_update->bind_param("ssddsisii", $name, $description, $price, $discount_price, $category, $stock, $image_path, $is_available, $id);
 
             if ($stmt_update->execute()) {
                 $_SESSION['success_message'] = "Menu berhasil diperbarui!";
-                // INI ADALAH FUNGSI YANG MEMBUTUHKAN HEADER BELUM DIKIRIM
                 header("Location: kelolamenu.php");
-                exit(); // Pastikan skrip berhenti setelah redirect
+                exit();
             } else {
-                $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>Gagal memperbarui data menu.</div>";
+                $message = "<div class='bg-red-100 text-red-700 p-3 rounded'>Gagal memperbarui data menu. Error: " . $stmt_update->error . "</div>";
             }
             $stmt_update->close();
         } else {
@@ -92,8 +95,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $menu_item = $_POST;
     $menu_item['image_url'] = $_POST['current_image'];
 } else {
-    // Ambil data menu saat ini untuk ditampilkan di form (Saat halaman dimuat pertama kali)
-    $sql_select = "SELECT id, name, description, price, category, stock, image_url, is_available FROM menu WHERE id = ?";
+    // [MODIFIED] Ambil juga discount_price saat memuat halaman
+    $sql_select = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available FROM menu WHERE id = ?";
     if ($stmt_select = $conn->prepare($sql_select)) {
         $stmt_select->bind_param("i", $menu_id);
         $stmt_select->execute();
@@ -113,7 +116,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 // 2. OUTPUT HTML DIMULAI DI SINI
 // =================================================================
-// Setelah semua logika selesai, baru kita panggil header.php
 require_once 'includes/header.php';
 ?>
 
@@ -142,17 +144,28 @@ require_once 'includes/header.php';
                             <label for="name" class="block text-sm font-medium text-gray-700 mb-1">Nama Menu</label>
                             <input type="text" name="name" id="name" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2" value="<?= htmlspecialchars($menu_item['name'] ?? ''); ?>">
                         </div>
-                        <div>
-                            <label for="price" class="block text-sm font-medium text-gray-700 mb-1">Harga (Rp)</label>
-                            <input type="number" name="price" id="price" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2" value="<?= (int)($menu_item['price'] ?? 0); ?>">
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="price" class="block text-sm font-medium text-gray-700 mb-1">Harga Normal (Rp)</label>
+                                <input type="number" name="price" id="price" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2" step="0.01" value="<?= htmlspecialchars($menu_item['price'] ?? 0); ?>">
+                            </div>
+                            <!-- [ADDED] Input field for discount price -->
+                            <div>
+                                <label for="discount_price" class="block text-sm font-medium text-gray-700 mb-1">Harga Diskon (Rp)</label>
+                                <input type="number" name="discount_price" id="discount_price" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2" step="0.01" value="<?= htmlspecialchars($menu_item['discount_price'] ?? ''); ?>" placeholder="Kosongkan untuk hapus diskon">
+                            </div>
                         </div>
+
                         <div>
                             <label for="category" class="block text-sm font-medium text-gray-700 mb-1">Kategori</label>
                             <select name="category" id="category" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2">
                                 <option value="makanan" <?= ($menu_item['category'] ?? '') == 'makanan' ? 'selected' : ''; ?>>Makanan</option>
                                 <option value="minuman" <?= ($menu_item['category'] ?? '') == 'minuman' ? 'selected' : ''; ?>>Minuman</option>
                                 <option value="snack" <?= ($menu_item['category'] ?? '') == 'snack' ? 'selected' : ''; ?>>Snack</option>
-                                <option value="other" <?= ($menu_item['category'] ?? '') == 'other' ? 'selected' : ''; ?>>Lainnya</option>
+                                <option value="kopi" <?= ($menu_item['category'] ?? '') == 'kopi' ? 'selected' : ''; ?>>Kopi</option>
+                                <option value="dessert" <?= ($menu_item['category'] ?? '') == 'dessert' ? 'selected' : ''; ?>>Dessert</option>
+                                <option value="others" <?= ($menu_item['category'] ?? '') == 'others' ? 'selected' : ''; ?>>Others</option>
                             </select>
                         </div>
                         <div>

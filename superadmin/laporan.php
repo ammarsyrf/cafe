@@ -8,12 +8,11 @@ require_once '../db_connect.php';
 if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['id'])) {
     $order_id = (int)$_GET['id'];
 
-    // --- LOGIKA UNTUK CETAK STRUK ---
+    // --- LOGIKA UNTUK CETAK STRUK (Tidak diubah) ---
     $order_details = null;
     $order_items = [];
 
     // Ambil data pesanan utama dari tabel 'orders'
-    // DITAMBAHKAN: LEFT JOIN kedua ke tabel 'users' dengan alias 'u_cashier' untuk mendapatkan nama kasir
     $sql_order = "SELECT o.*, u_customer.username as customer_username, u_cashier.name as cashier_name
                   FROM orders o 
                   LEFT JOIN users u_customer ON o.user_id = u_customer.id
@@ -45,18 +44,12 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
         $stmt_order->close();
     }
 
-    $conn->close();
-
     if (!$order_details) {
         die("Pesanan tidak ditemukan.");
     }
 
-    // Tentukan nama pelanggan (member atau guest)
     $customer_name = $order_details['customer_username'] ?? $order_details['customer_name'] ?? 'Guest';
-    // DITAMBAHKAN: Tentukan nama kasir
     $cashier_name = $order_details['cashier_name'] ?? 'N/A';
-
-    // Tampilkan HTML untuk struk dan hentikan eksekusi script
 ?>
     <!DOCTYPE html>
     <html lang="id">
@@ -97,7 +90,6 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
                 <div class="flex justify-between"><span>No. Pesanan:</span><span>#<?= $order_details['id'] ?></span></div>
                 <div class="flex justify-between"><span>Tanggal:</span><span><?= date('d/m/y H:i', strtotime($order_details['created_at'])) ?></span></div>
                 <div class="flex justify-between"><span>Pelanggan:</span><span><?= htmlspecialchars($customer_name) ?></span></div>
-                <!-- DITAMBAHKAN: Baris untuk menampilkan nama kasir -->
                 <div class="flex justify-between"><span>Kasir:</span><span><?= htmlspecialchars($cashier_name) ?></span></div>
             </div>
             <div class="border-t border-b border-dashed border-black my-2 py-2">
@@ -130,10 +122,58 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_struk' && isset($_GET['i
 
     </html>
 <?php
-    exit(); // Hentikan script agar tidak menampilkan halaman laporan
+    $conn->close();
+    exit(); // Hentikan script agar tidak menampilkan halaman laporan utama
+
+    // --- [BARU] LOGIKA UNTUK CETAK EXCEL (FORMAT CSV) ---
+} elseif (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
+
+    // Ambil rentang tanggal dari URL
+    $start_date = $_GET['start_date'] ?? date('Y-m-01');
+    $end_date = $_GET['end_date'] ?? date('Y-m-d');
+
+    // Set header untuk memberitahu browser agar men-download file
+    $filename = "Laporan_Penjualan_" . $start_date . "_sampai_" . $end_date . ".csv";
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+
+    // Buka output stream PHP untuk menulis file CSV
+    $output = fopen('php://output', 'w');
+
+    // Tulis baris header untuk CSV
+    fputcsv($output, ['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'Total Bayar']);
+
+    // Query data pesanan sesuai rentang tanggal (sama seperti di halaman laporan)
+    $sql_export = "SELECT o.id, o.created_at, o.total_amount, 
+                          COALESCE(u.username, o.customer_name) as customer_name
+                   FROM orders o
+                   LEFT JOIN users u ON o.user_id = u.id
+                   WHERE DATE(o.created_at) BETWEEN ? AND ?
+                   ORDER BY o.created_at ASC"; // Urutkan dari yang terlama untuk laporan
+
+    if ($stmt_export = $conn->prepare($sql_export)) {
+        $stmt_export->bind_param("ss", $start_date, $end_date);
+        $stmt_export->execute();
+        $result_export = $stmt_export->get_result();
+
+        // Loop melalui setiap baris hasil query dan tulis ke file CSV
+        while ($row = $result_export->fetch_assoc()) {
+            fputcsv($output, [
+                '#' . $row['id'],
+                date('d-m-Y H:i:s', strtotime($row['created_at'])),
+                $row['customer_name'] ?? 'Guest',
+                $row['total_amount'] // Simpan sebagai angka murni agar mudah dihitung di Excel
+            ]);
+        }
+        $stmt_export->close();
+    }
+
+    fclose($output);
+    $conn->close();
+    exit(); // Hentikan script setelah file CSV dibuat
 }
 
-// --- JIKA BUKAN CETAK STRUK, TAMPILKAN HALAMAN LAPORAN ---
+// --- JIKA BUKAN AKSI CETAK, TAMPILKAN HALAMAN LAPORAN BIASA ---
 require_once 'includes/header.php';
 
 // Atur tanggal default: 1 bulan terakhir
@@ -146,7 +186,7 @@ $total_transactions = 0;
 $best_seller = ['name' => 'N/A', 'quantity' => 0];
 $orders_data = [];
 
-// Query untuk mengambil data pesanan (sebagai pengganti transaksi)
+// Query untuk mengambil data pesanan
 $sql_orders = "SELECT o.id, o.created_at, o.total_amount, 
                       COALESCE(u.username, o.customer_name) as customer_name
                FROM orders o
@@ -189,10 +229,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
 }
 ?>
 
-<!-- Pustaka JavaScript untuk Cetak PDF -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
-
 <div class="container mx-auto p-4 md:p-6">
     <!-- Header dan Filter -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
@@ -208,11 +244,13 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                     </svg> Filter
                 </button>
             </form>
-            <button onclick="generatePDF()" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 flex items-center gap-2 shadow">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <!-- [DIUBAH] Tombol Cetak PDF menjadi Cetak Excel -->
+            <a href="laporan.php?action=cetak_excel&start_date=<?= htmlspecialchars($start_date) ?>&end_date=<?= htmlspecialchars($end_date) ?>" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 shadow">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                </svg> Cetak PDF
-            </button>
+                </svg>
+                Cetak Excel
+            </a>
         </div>
     </div>
 
@@ -286,87 +324,7 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
     </div>
 </div>
 
-<script>
-    function generatePDF() {
-        const {
-            jsPDF
-        } = window.jspdf;
-        const doc = new jsPDF();
-
-        // Judul PDF
-        doc.setFontSize(18);
-        doc.text("Laporan Penjualan Kafe", 14, 22);
-
-        // Informasi Periode
-        doc.setFontSize(11);
-        doc.setTextColor(100);
-        const startDate = "<?= date('d M Y', strtotime($start_date)) ?>";
-        const endDate = "<?= date('d M Y', strtotime($end_date)) ?>";
-        doc.text(`Periode: ${startDate} - ${endDate}`, 14, 30);
-
-        // Ringkasan Statistik
-        doc.autoTable({
-            startY: 40,
-            head: [
-                ['Deskripsi', 'Jumlah']
-            ],
-            body: [
-                ['Total Pendapatan', 'Rp <?= number_format($total_revenue, 0, ',', '.') ?>'],
-                ['Total Pesanan', '<?= $total_transactions ?>'],
-                ['Produk Terlaris', '<?= htmlspecialchars(addslashes($best_seller['name'])) ?>'] // addslashes to handle quotes
-            ],
-            theme: 'grid',
-            styles: {
-                fontSize: 10
-            }
-        });
-
-        // Tabel Transaksi
-        doc.autoTable({
-            startY: doc.autoTable.previous.finalY + 10,
-            html: '#report-table',
-            // Penting: Hilangkan kolom 'Aksi' dari PDF
-            columns: [{
-                    header: 'ID Pesanan',
-                    dataKey: 0
-                },
-                {
-                    header: 'Tanggal',
-                    dataKey: 1
-                },
-                {
-                    header: 'Nama Pelanggan',
-                    dataKey: 2
-                },
-                {
-                    header: 'Total Bayar (Rp)',
-                    dataKey: 3
-                },
-            ],
-            // Opsi untuk memastikan kolom 'Aksi' tidak ikut tercetak
-            columnStyles: {
-                4: {
-                    cellWidth: 0,
-                    minCellWidth: 0
-                }
-            },
-            didParseCell: function(data) {
-                if (data.column.index === 4) {
-                    data.cell.text = ''; // Kosongkan teks di kolom Aksi
-                }
-            },
-            headStyles: {
-                fillColor: [22, 160, 133]
-            },
-            styles: {
-                fontSize: 9
-            }
-        });
-
-        // Simpan PDF
-        doc.save(`Laporan_Penjualan_${startDate}_-_${endDate}.pdf`);
-    }
-</script>
+<!-- [DIHAPUS] Seluruh script JavaScript untuk membuat PDF dihapus karena tidak diperlukan lagi -->
 
 <?php
 require_once 'includes/footer.php';
