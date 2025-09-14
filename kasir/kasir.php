@@ -34,8 +34,8 @@ if (isset($_GET['ajax'])) {
     // --- Endpoint untuk mengambil detail item pesanan ---
     if ($_GET['action'] === 'get_order_details' && isset($_GET['order_id'])) {
         $order_id = (int)$_GET['order_id'];
-        // [PERBAIKAN] Tambahkan JOIN untuk mengambil nomor meja
-        $sql_order = "SELECT o.subtotal, o.discount_amount, o.tax, o.total_amount, t.table_number 
+        // [MODIFIKASI] Tambahkan o.order_type ke query
+        $sql_order = "SELECT o.subtotal, o.discount_amount, o.tax, o.total_amount, o.order_type, t.table_number 
                       FROM orders o 
                       LEFT JOIN tables t ON o.table_id = t.id 
                       WHERE o.id = ?";
@@ -64,7 +64,8 @@ if (isset($_GET['ajax'])) {
             'discount' => (float)$order_data['discount_amount'],
             'tax' => (float)$order_data['tax'],
             'total_amount' => (float)$order_data['total_amount'],
-            'table_number' => $order_data['table_number'] // [PENAMBAHAN] Kirim nomor meja ke frontend
+            'table_number' => $order_data['table_number'],
+            'order_type' => $order_data['order_type'] // [PENAMBAHAN] Kirim order_type ke frontend
         ];
         $response = ['success' => true, 'data' => $response_data];
     }
@@ -72,7 +73,7 @@ if (isset($_GET['ajax'])) {
     // [PENAMBAHAN: Endpoint untuk REAL-TIME UPDATE]
     // Endpoint baru untuk mengambil semua daftar pesanan dalam format HTML
     if ($_GET['action'] === 'get_latest_orders') {
-        // Query dasar yang sama dengan di halaman utama
+        // Query dasar yang sama dengan di halaman utama (o.* sudah mencakup order_type)
         $base_select = "SELECT o.*, t.table_number, u.name AS member_name, c.name AS cashier_processor_name FROM orders o LEFT JOIN tables t ON o.table_id = t.id LEFT JOIN members u ON o.user_id = u.id LEFT JOIN users c ON o.cashier_id = c.id";
 
         // 1. Pending Orders (Tunai)
@@ -93,7 +94,18 @@ if (isset($_GET['ajax'])) {
                     <?php elseif (!empty($order['member_name'])) : ?>
                         <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
                     <?php endif; ?>
-                    <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+
+                    <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
+                    <p class="text-sm text-gray-600 mb-2">Tipe:
+                        <span class="font-semibold">
+                            <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                                Take Away
+                            <?php else : ?>
+                                Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
+                            <?php endif; ?>
+                        </span>
+                    </p>
+
                     <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                     <form method="POST" action="kasir.php">
                         <input type="hidden" name="action" value="process_cash_payment">
@@ -128,8 +140,19 @@ if (isset($_GET['ajax'])) {
                         <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                         <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                     </div>
-                    <?php if (!empty($order['customer_name'])) : ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])) : ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
-                    <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+                    <?php if (!empty($order['customer_name'])): ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])): ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
+
+                    <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
+                    <p class="text-sm text-gray-600 mb-2">Tipe:
+                        <span class="font-semibold">
+                            <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                                Take Away
+                            <?php else : ?>
+                                Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
+                            <?php endif; ?>
+                        </span>
+                    </p>
+
                     <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                     <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
                     <div class="mt-4 flex flex-wrap gap-2">
@@ -395,7 +418,17 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                                 <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
                             <?php endif; ?>
 
-                            <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+                            <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
+                            <p class="text-sm text-gray-600 mb-2">Tipe:
+                                <span class="font-semibold">
+                                    <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                                        Take Away
+                                    <?php else : ?>
+                                        Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
+                                    <?php endif; ?>
+                                </span>
+                            </p>
+
                             <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                             <form method="POST" action="kasir.php">
                                 <input type="hidden" name="action" value="process_cash_payment">
@@ -432,7 +465,18 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                             <?php elseif (!empty($order['member_name'])) : ?>
                                 <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
                             <?php endif; ?>
-                            <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+
+                            <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
+                            <p class="text-sm text-gray-600 mb-2">Tipe:
+                                <span class="font-semibold">
+                                    <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                                        Take Away
+                                    <?php else : ?>
+                                        Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
+                                    <?php endif; ?>
+                                </span>
+                            </p>
+
                             <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                             <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
                             <div class="mt-4 flex flex-wrap gap-2">
@@ -515,7 +559,17 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
             <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
         <?php endif; ?>
 
-        <?php if ($order['table_number']) : ?><p class="text-sm text-gray-600 mb-2">Meja: <span class="font-semibold"><?= $order['table_number'] ?></span></p><?php endif; ?>
+        <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type -->
+        <p class="text-sm text-gray-600 mb-2">Tipe:
+            <span class="font-semibold">
+                <?php if (isset($order['order_type']) && $order['order_type'] === 'take_away') : ?>
+                    Take Away
+                <?php else : ?>
+                    Dine-In (Meja <?= htmlspecialchars($order['table_number']) ?>)
+                <?php endif; ?>
+            </span>
+        </p>
+
         <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
         <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
 
@@ -551,10 +605,12 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                             <td style="text-align: right;"><?= htmlspecialchars($order['member_name']) ?></td>
                         </tr>
                     <?php endif; ?>
-                    <?php if ($order['table_number']) : ?><tr>
-                            <td>Meja</td>
-                            <td style="text-align: right;"><?= $order['table_number'] ?></td>
-                        </tr><?php endif; ?>
+
+                    <!-- [MODIFIKASI] Menampilkan Tipe berdasarkan order_type di Struk -->
+                    <tr>
+                        <td>Tipe</td>
+                        <td style="text-align: right;"><?= (isset($order['order_type']) && $order['order_type'] === 'take_away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></td>
+                    </tr>
                 </table>
                 <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
                 <table style="width: 100%; font-size: 11px;">
@@ -721,13 +777,16 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 discount,
                 tax,
                 total_amount,
-                table_number // [PENAMBAHAN] Ambil data nomor meja
+                table_number,
+                order_type // [PENAMBAHAN] Ambil data order_type
             } = data;
 
-            // [PENAMBAHAN] Buat HTML untuk info tambahan seperti nomor meja
+            // [MODIFIKASI] Menampilkan Tipe berdasarkan order_type di detail view
             let infoHTML = '';
-            if (table_number) {
-                infoHTML += `<div class="mb-2 text-sm"><span class="font-semibold text-gray-700">Meja:</span> ${table_number}</div>`;
+            if (order_type === 'take_away') {
+                infoHTML += `<div class="mb-2 text-sm"><span class="font-semibold text-gray-700">Tipe:</span> Take Away</div>`;
+            } else {
+                infoHTML += `<div class="mb-2 text-sm"><span class="font-semibold text-gray-700">Tipe:</span> Dine-In (Meja ${table_number})</div>`;
             }
 
             let tableHTML = `<table class="min-w-full text-sm"><thead class="bg-gray-100"><tr><th class="p-2 text-left font-semibold text-gray-600">Item</th><th class="p-2 text-center font-semibold text-gray-600">Jml</th><th class="p-2 text-right font-semibold text-gray-600">Subtotal</th></tr></thead><tbody class="divide-y">`;
@@ -744,7 +803,6 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 <div class="flex justify-between font-bold text-base mt-1 py-1 border-t border-gray-300"><span>Total Bayar</span><span>Rp ${formatRupiah(total_amount)}</span></div>
             </div>`;
 
-            // [PERBAIKAN] Gabungkan info tambahan dengan tabel item
             container.innerHTML = infoHTML + tableHTML;
         }
 
