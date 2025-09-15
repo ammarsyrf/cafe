@@ -429,8 +429,12 @@ if ($result_banners) {
                 <span class="bg-gray-100 text-gray-800 px-3 py-1.5 rounded-full font-bold text-xs md:text-sm">Meja: <?= htmlspecialchars($table_id) ?></span>
                 <div id="authButtonContainer">
                     <?php if ($is_logged_in) : ?>
-                        <div class="flex items-center space-x-3">
+                        <div class="flex items-center space-x-2">
                             <span class="font-semibold text-green-600 text-sm hidden sm:block"><i class="fas fa-star mr-1"></i> Member</span>
+                            <!-- [DIUBAH] Tombol Profile Ditambahkan -->
+                            <a href="member.php" title="Lihat Profil" class="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-full font-bold hover:bg-blue-700 transition-colors text-sm">
+                                <i class="fas fa-user"></i>
+                            </a>
                             <a href="logout.php" class="bg-gray-800 text-white px-3 md:px-4 py-2 rounded-full font-bold hover:bg-gray-900 transition-colors text-sm">Logout</a>
                         </div>
                     <?php else : ?>
