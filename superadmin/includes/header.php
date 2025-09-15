@@ -6,8 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Panggil file konfigurasi. Variabel $pdo yang dibuat di dalam config.php
-// akan otomatis tersedia di file ini setelah baris ini dieksekusi.
+// Panggil file konfigurasi.
 require_once __DIR__ . '/../../config.php';
 
 // Cek jika variabel $pdo benar-benar ada setelah include
@@ -19,23 +18,18 @@ if (!isset($pdo)) {
 $nama_toko = 'Toko Kopi Anda'; // Fallback jika query gagal
 
 try {
-    // Pastikan variabel koneksi database ($pdo) tersedia dari config.php
-
-    // --- PERUBAHAN DI SINI ---
-    // Query disesuaikan untuk mencari 'cafe_name' sesuai dengan data di database Anda.
+    // Query disesuaikan untuk mencari 'cafe_name'
     $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_name = 'cafe_name'");
     $stmt->execute();
-
-    // Fetch hasilnya
     $pengaturan = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Jika data ditemukan dan tidak kosong, timpa variabel default dengan nilai yang benar
+    // Jika data ditemukan, timpa variabel default
     if ($pengaturan && !empty($pengaturan['setting_value'])) {
         $nama_toko = $pengaturan['setting_value'];
     }
 } catch (PDOException $e) {
-    // Jika terjadi error koneksi atau query, biarkan nama toko menggunakan nilai default.
-    // Untuk debugging, Anda bisa menampilkan error: error_log("Error fetching settings: " . $e->getMessage());
+    // Biarkan nama toko menggunakan nilai default jika ada error.
+    // error_log("Error fetching settings: " . $e->getMessage());
 }
 
 ?>
@@ -68,103 +62,129 @@ try {
     </style>
 </head>
 
-<body class="bg-gray-100 flex h-screen overflow-hidden">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-gray-800 text-white p-4 flex flex-col">
-        <div class="mb-8 text-center">
-            <h1 class="text-2xl font-bold text-yellow-400"><?= htmlspecialchars($nama_toko) ?></h1>
-            <p class="text-sm text-gray-400">Super Admin Panel</p>
-        </div>
-        <nav class="flex-grow">
-            <a href="<?= BASE_URL ?>superadmin/dashboard.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700">
-                <i class="fas fa-tachometer-alt w-6 mr-3"></i> Dashboard
-            </a>
-            <a href="<?= BASE_URL ?>superadmin/kelolamenu.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-book-open w-6 mr-3"></i> Kelola Menu
-            </a>
-            <!-- [DITAMBAHKAN] Link untuk Kelola Banner -->
-            <a href="<?= BASE_URL ?>superadmin/banner/kelola_banner.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-images w-6 mr-3"></i> Kelola Banner
-            </a>
-            <a href="<?= BASE_URL ?>superadmin/pelanggan/pelanggan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-users w-6 mr-3"></i> Pelanggan
-            </a>
-            <a href="<?= BASE_URL ?>superadmin/penjualan/penjualan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-cash-register w-6 mr-3"></i> Penjualan
-            </a>
-            <a href="<?= BASE_URL ?>superadmin/laporan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-chart-pie w-6 mr-3"></i> Laporan
-            </a>
-            <a href="<?= BASE_URL ?>superadmin/ulasan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-star w-6 mr-3"></i> Ulasan
-            </a>
-            <!-- PENAMBAHAN FITUR BARCODE GENERATOR -->
-            <a href="<?= BASE_URL ?>superadmin/barcode_generator.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-qrcode w-6 mr-3"></i> Barcode Generator
-            </a>
-            <!-- AKHIR PENAMBAHAN -->
-            <a href="<?= BASE_URL ?>superadmin/pengaturan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
-                <i class="fas fa-cog w-6 mr-3"></i> Pengaturan
-            </a>
-        </nav>
-        <div class="mt-auto">
-            <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-red-700 mt-2">
-                <i class="fas fa-sign-out-alt w-6 mr-3"></i> Logout
-            </a>
-        </div>
-    </aside>
-
-    <!-- Main Content -->
-    <div class="flex-1 overflow-y-auto">
-        <header class="bg-white shadow-md p-4 flex justify-between items-center sticky top-0 z-10">
-            <h2 class="text-xl font-semibold text-gray-700" id="page-title">Dashboard</h2>
-            <div class="flex items-center">
-                <span class="text-gray-600 mr-4">Selamat Datang, Super Admin!</span>
-                <img src="https://placehold.co/40x40/5958A1/FFFFFF?text=A" alt="Admin" class="rounded-full">
+<body class="bg-gray-100 h-screen overflow-hidden relative">
+    <!-- [DIUBAH] Wrapper untuk layout dinamis -->
+    <div class="flex h-full">
+        <!-- Sidebar -->
+        <!-- [DIUBAH] Class sidebar diubah untuk transisi dan posisi mobile -->
+        <aside id="sidebar" class="w-64 bg-gray-800 text-white p-4 flex-col fixed inset-y-0 left-0 transform -translate-x-full md:relative md:translate-x-0 transition-transform duration-300 ease-in-out z-30 flex">
+            <div class="mb-8 text-center">
+                <h1 class="text-2xl font-bold text-yellow-400"><?= htmlspecialchars($nama_toko) ?></h1>
+                <p class="text-sm text-gray-400">Super Admin Panel</p>
             </div>
-        </header>
-        <main class="p-6">
-            <script>
-                document.addEventListener("DOMContentLoaded", function() {
-                    const currentPath = window.location.pathname;
-                    const sidebarLinks = document.querySelectorAll('aside .sidebar-link');
-                    const pageTitle = document.getElementById('page-title');
+            <nav class="flex-grow">
+                <a href="<?= BASE_URL ?>superadmin/dashboard.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700">
+                    <i class="fas fa-tachometer-alt w-6 mr-3"></i> Dashboard
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/kelolamenu.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-book-open w-6 mr-3"></i> Kelola Menu
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/banner/kelola_banner.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-images w-6 mr-3"></i> Kelola Banner
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/pelanggan/pelanggan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-users w-6 mr-3"></i> Pelanggan
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/penjualan/penjualan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-cash-register w-6 mr-3"></i> Penjualan
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/laporan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-chart-pie w-6 mr-3"></i> Laporan
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/ulasan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-star w-6 mr-3"></i> Ulasan
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/barcode_generator.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-qrcode w-6 mr-3"></i> Barcode Generator
+                </a>
+                <a href="<?= BASE_URL ?>superadmin/pengaturan.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                    <i class="fas fa-cog w-6 mr-3"></i> Pengaturan
+                </a>
+            </nav>
+            <div class="mt-auto">
+                <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-red-700 mt-2">
+                    <i class="fas fa-sign-out-alt w-6 mr-3"></i> Logout
+                </a>
+            </div>
+        </aside>
 
-                    let currentSection = 'dashboard';
-                    const pathParts = currentPath.split('/');
-                    const superadminIndex = pathParts.indexOf('superadmin');
+        <!-- Main Content -->
+        <!-- [DIUBAH] Wrapper konten utama diubah untuk flexbox -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+            <header class="bg-white shadow-md p-4 flex justify-between items-center sticky top-0 z-10">
+                <!-- [DITAMBAHKAN] Tombol Hamburger untuk mobile -->
+                <div class="flex items-center">
+                    <button id="sidebar-toggle" class="text-gray-600 focus:outline-none md:hidden mr-4">
+                        <i class="fas fa-bars text-2xl"></i>
+                    </button>
+                    <h2 class="text-xl font-semibold text-gray-700" id="page-title">Dashboard</h2>
+                </div>
+                <div class="flex items-center">
+                    <span class="text-gray-600 mr-4 hidden sm:block">Selamat Datang, Super Admin!</span>
+                    <img src="https://placehold.co/40x40/5958A1/FFFFFF?text=A" alt="Admin" class="rounded-full">
+                </div>
+            </header>
+            <main class="p-6 flex-1 overflow-y-auto">
+                <script>
+                    document.addEventListener("DOMContentLoaded", function() {
+                        const sidebar = document.getElementById('sidebar');
+                        const sidebarToggle = document.getElementById('sidebar-toggle');
+                        const currentPath = window.location.pathname;
+                        const sidebarLinks = document.querySelectorAll('aside .sidebar-link');
+                        const pageTitle = document.getElementById('page-title');
 
-                    if (superadminIndex > -1 && pathParts.length > superadminIndex + 1) {
-                        let potentialSection = pathParts[superadminIndex + 1];
-                        if (potentialSection.endsWith('.php')) {
-                            currentSection = potentialSection.replace('.php', '');
-                        } else {
-                            currentSection = potentialSection;
+                        // [DITAMBAHKAN] Logika untuk membuka/menutup sidebar
+                        if (sidebarToggle) {
+                            sidebarToggle.addEventListener('click', () => {
+                                sidebar.classList.toggle('-translate-x-full');
+                            });
                         }
-                    }
 
-                    let linkActivated = false;
-                    sidebarLinks.forEach(link => {
-                        const linkHref = link.getAttribute('href');
-                        if (link.closest('.mt-auto')) return; // Skip logout link
+                        // [DITAMBAHKAN] Klik di luar sidebar untuk menutupnya di mobile
+                        document.addEventListener('click', (event) => {
+                            const isClickInsideSidebar = sidebar.contains(event.target);
+                            const isClickOnToggle = sidebarToggle.contains(event.target);
 
-                        if (linkHref.includes(currentSection)) {
-                            link.classList.add('active');
-                            if (pageTitle) {
-                                pageTitle.textContent = link.textContent.trim();
+                            if (!isClickInsideSidebar && !isClickOnToggle && !sidebar.classList.contains('-translate-x-full')) {
+                                if (window.innerWidth < 768) { // md breakpoint
+                                    sidebar.classList.add('-translate-x-full');
+                                }
                             }
-                            linkActivated = true;
+                        });
+
+
+                        // --- Logika untuk menandai link aktif (tidak diubah) ---
+                        let currentSection = 'dashboard';
+                        const pathParts = currentPath.split('/');
+                        const superadminIndex = pathParts.indexOf('superadmin');
+
+                        if (superadminIndex > -1 && pathParts.length > superadminIndex + 1) {
+                            let potentialSection = pathParts[superadminIndex + 1];
+                            currentSection = potentialSection.endsWith('.php') ? potentialSection.replace('.php', '') : potentialSection;
+                        }
+
+                        let linkActivated = false;
+                        sidebarLinks.forEach(link => {
+                            const linkHref = link.getAttribute('href');
+                            if (link.closest('.mt-auto')) return; // Skip logout link
+
+                            if (linkHref.includes(currentSection)) {
+                                link.classList.add('active');
+                                if (pageTitle) {
+                                    pageTitle.textContent = link.textContent.trim();
+                                }
+                                linkActivated = true;
+                            }
+                        });
+
+                        if (!linkActivated) {
+                            const dashboardLink = document.querySelector('a[href*="dashboard.php"]');
+                            if (dashboardLink) {
+                                dashboardLink.classList.add('active');
+                                if (pageTitle) {
+                                    pageTitle.textContent = "Dashboard";
+                                }
+                            }
                         }
                     });
-
-                    if (!linkActivated) {
-                        const dashboardLink = document.querySelector('a[href*="dashboard.php"]');
-                        if (dashboardLink) {
-                            dashboardLink.classList.add('active');
-                            if (pageTitle) {
-                                pageTitle.textContent = "Dashboard";
-                            }
-                        }
-                    }
-                });
-            </script>
+                </script>
