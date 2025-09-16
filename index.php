@@ -2,8 +2,8 @@
 // File: index.php
 // Halaman untuk pelanggan (dapat diakses melalui QR code di meja)
 
+// [PERBAIKAN PATH] Keluar satu folder untuk menemukan file koneksi
 require_once 'db_connect.php';
-// [DITAMBAHKAN] Memuat semua pengaturan dari database ke dalam variabel $APP_CONFIG
 require_once 'config.php';
 
 
@@ -12,9 +12,9 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
-// Cek status login user
-$is_logged_in = isset($_SESSION['user_id']);
-$user_name = $_SESSION['user_name'] ?? '';
+// [PERBAIKAN LOGIKA SESI] Cek status login user dengan memeriksa 'ruang' session yang benar
+$is_logged_in = isset($_SESSION['member']);
+$user_name = $_SESSION['member']['name'] ?? '';
 
 // Inisialisasi keranjang jika belum ada
 if (!isset($_SESSION['cart'])) {
@@ -198,7 +198,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $ppn = $cart_data['ppn'];
     $total = $cart_data['total'];
     $order_type = 'dine-in';
-    $user_id = $is_logged_in ? $_SESSION['user_id'] : null;
+    // [PERBAIKAN LOGIKA SESI] Ambil user_id dari dalam 'ruang' session 'member'
+    $user_id = $is_logged_in ? $_SESSION['member']['id'] : null;
 
 
     $conn->begin_transaction();
@@ -416,6 +417,24 @@ if ($result_banners) {
         .menu-card-clickable:active {
             transform: scale(0.97);
         }
+
+        /* [CSS BARU] Untuk animasi dropdown form login di keranjang */
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease-out, margin-top 0.4s ease-out, padding 0.4s ease-out;
+            margin-top: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+
+        .collapsible-content.show {
+            max-height: 300px;
+            /* Sesuaikan jika form lebih tinggi */
+            margin-top: 1rem;
+            padding: 1rem;
+            /* DIUBAH: Menambahkan padding di semua sisi agar form tidak menempel di tepi */
+        }
     </style>
 </head>
 
@@ -431,7 +450,7 @@ if ($result_banners) {
                     <?php if ($is_logged_in) : ?>
                         <div class="flex items-center space-x-2">
                             <span class="font-semibold text-green-600 text-sm hidden sm:block"><i class="fas fa-star mr-1"></i> Member</span>
-                            <!-- [DIUBAH] Tombol Profile Ditambahkan -->
+                            <!-- [DIUBAH & PERBAIKAN PATH] Tombol Profile Ditambahkan -->
                             <a href="member.php" title="Lihat Profil" class="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-full font-bold hover:bg-blue-700 transition-colors text-sm">
                                 <i class="fas fa-user"></i>
                             </a>
@@ -562,7 +581,7 @@ if ($result_banners) {
         </div>
     </footer>
 
-    <!-- MODALS AND DRAWERS (No design change needed) -->
+    <!-- MODALS AND DRAWERS -->
     <!-- Cart Floating Action Button -->
     <button id="cartFab" class="fixed bottom-6 right-6 bg-green-500 text-white rounded-full shadow-lg w-16 h-16 flex items-center justify-center z-50 transform hover:scale-110 transition-transform">
         <i class="fas fa-shopping-cart text-2xl"></i>
@@ -579,9 +598,43 @@ if ($result_banners) {
         </div>
         <div id="cart-summary" class="p-5 border-t bg-white shadow-inner hidden">
             <form id="checkoutForm" method="POST">
-                <?php if (!$is_logged_in) : ?><div class="mb-4"><label for="customer_name" class="block text-sm font-medium text-gray-700 mb-1">Nama Pemesan</label><input type="text" id="customer_name" name="customer_name" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Masukkan nama Anda">
+                <?php if (!$is_logged_in) : ?>
+                    <div class="flex items-center p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        <input type="checkbox" id="login-checkbox-cart" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                        <label for="login-checkbox-cart" class="ml-3 block text-sm font-medium text-blue-800 cursor-pointer">
+                            Login sebagai member untuk dapatkan diskon?
+                        </label>
+                    </div>
+
+                    <!-- [PERUBAHAN] Form login dropdown yang dirapikan -->
+                    <div id="cart-login-form-container" class="collapsible-content bg-gray-50 rounded-lg border">
+                        <div id="cartLoginForm" class="space-y-3">
+                            <div id="cart-login-error" class="text-red-500 text-sm text-center pt-1"></div>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 flex items-center pl-3"><i class="fas fa-envelope text-gray-400"></i></span>
+                                <input type="email" id="cart_login_email" name="email" class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Email member">
+                            </div>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 flex items-center pl-3"><i class="fas fa-lock text-gray-400"></i></span>
+                                <input type="password" id="cart_login_password" name="password" class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Password">
+                            </div>
+                            <div class="flex items-center justify-end">
+                                <a href="#" id="cartShowRegister" class="text-xs text-blue-600 hover:underline">Daftar member baru</a>
+                            </div>
+                            <button type="button" id="cartLoginButton" class="w-full bg-blue-600 text-white font-bold py-2.5 rounded-md hover:bg-blue-700 transition-colors text-sm flex items-center justify-center">
+                                <i class="fas fa-sign-in-alt mr-2"></i>
+                                <span>Login</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="customer-name-container" class="mt-4">
+                        <label for="customer_name" class="block text-sm font-medium text-gray-700 mb-1">Nama Pemesan</label>
+                        <input type="text" id="customer_name" name="customer_name" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Masukkan nama Anda">
                         <p class="text-xs text-gray-500 mt-1">Diperlukan agar kasir dapat memanggil nama Anda.</p>
-                    </div><?php endif; ?>
+                    </div>
+                    <hr class="my-4 border-gray-200">
+                <?php endif; ?>
                 <div class="space-y-2 mb-4">
                     <div class="flex justify-between font-medium text-gray-600"><span>Subtotal</span><span id="cart-subtotal"></span></div>
                     <div id="discount-row" class="flex justify-between font-medium text-green-600 hidden"><span>Diskon Member</span><span id="cart-discount"></span></div>
@@ -684,6 +737,45 @@ if ($result_banners) {
             const loginForm = document.getElementById('loginForm');
             const registerForm = document.getElementById('registerForm');
             const checkoutForm = document.getElementById('checkoutForm');
+
+            // Variabel baru untuk form di keranjang
+            const loginCheckboxCart = document.getElementById('login-checkbox-cart');
+            const cartLoginFormContainer = document.getElementById('cart-login-form-container');
+            const customerNameContainer = document.getElementById('customer-name-container');
+            const cartLoginButton = document.getElementById('cartLoginButton');
+            const cartShowRegister = document.getElementById('cartShowRegister');
+
+
+            if (loginCheckboxCart) {
+                loginCheckboxCart.addEventListener('change', (e) => {
+                    const isChecked = e.target.checked;
+                    cartLoginFormContainer.classList.toggle('show', isChecked);
+
+                    if (customerNameContainer) {
+                        customerNameContainer.style.transition = 'opacity 0.3s ease-out';
+                        customerNameContainer.style.opacity = isChecked ? '0' : '1';
+                        setTimeout(() => {
+                            customerNameContainer.style.display = isChecked ? 'none' : 'block';
+                        }, 300);
+
+                        const customerNameInput = customerNameContainer.querySelector('#customer_name');
+                        if (customerNameInput) {
+                            customerNameInput.required = !isChecked;
+                        }
+                    }
+                });
+            }
+
+            if (cartShowRegister) {
+                cartShowRegister.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    toggleCartDrawer(false);
+                    toggleLoginModal(true);
+                    document.getElementById('login-form-container').classList.add('hidden');
+                    document.getElementById('register-form-container').classList.remove('hidden');
+                });
+            }
+
             const toggleCartDrawer = (show) => {
                 cartDrawer.classList.toggle('translate-x-full', !show);
                 cartBackdrop.classList.toggle('hidden', !show);
@@ -700,7 +792,7 @@ if ($result_banners) {
             };
             checkoutForm.addEventListener('submit', (e) => {
                 const customerNameInput = document.getElementById('customer_name');
-                if (customerNameInput && customerNameInput.value.trim() === '') {
+                if (customerNameInput && customerNameInput.required && customerNameInput.value.trim() === '') {
                     e.preventDefault();
                     showToast('Nama pemesan tidak boleh kosong.', false);
                     customerNameInput.focus();
@@ -738,25 +830,65 @@ if ($result_banners) {
                 registerFormContainer.classList.add('hidden');
                 loginFormContainer.classList.remove('hidden');
             });
-            loginForm.addEventListener('submit', async (e) => {
+
+            // [PERBAIKAN PATH] Logika login yang bisa dipakai ulang
+            const performLogin = async (formData, errorElId) => {
+                try {
+                    const response = await fetch('login.php', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+
+                    if (result.success) {
+                        showToast(result.message, true);
+                        toggleLoginModal(false); // Menutup modal utama jika terbuka
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        document.getElementById(errorElId).textContent = result.message;
+                    }
+                } catch (error) {
+                    document.getElementById(errorElId).textContent = 'Terjadi kesalahan jaringan.';
+                }
+            };
+
+            // Handler untuk form login di modal utama
+            const handleModalFormSubmit = (e) => {
                 e.preventDefault();
                 const formData = new FormData(loginForm);
-                const response = await fetch('login.php', {
-                    method: 'POST',
-                    body: formData
-                });
-                const result = await response.json();
-                if (result.success) {
-                    showToast(result.message, true);
-                    toggleLoginModal(false);
-                    setTimeout(() => window.location.reload(), 1000);
-                } else {
-                    document.getElementById('login-error').textContent = result.message;
+                performLogin(formData, 'login-error');
+            };
+
+            // Handler untuk tombol login di keranjang
+            const handleCartLoginClick = (e) => {
+                e.preventDefault();
+                const emailInput = document.getElementById('cart_login_email');
+                const passwordInput = document.getElementById('cart_login_password');
+                const errorEl = document.getElementById('cart-login-error');
+
+                errorEl.textContent = ''; // Hapus pesan error sebelumnya
+                if (!emailInput.value || !passwordInput.value) {
+                    errorEl.textContent = 'Email dan password harus diisi.';
+                    return;
                 }
-            });
+
+                const formData = new FormData();
+                formData.append('email', emailInput.value);
+                formData.append('password', passwordInput.value);
+                performLogin(formData, 'cart-login-error');
+            };
+
+            // Terapkan event listener
+            if (loginForm) loginForm.addEventListener('submit', handleModalFormSubmit);
+            if (cartLoginButton) cartLoginButton.addEventListener('click', handleCartLoginClick);
+
+            // [PERBAIKAN] Menghapus karakter 's' yang menyebabkan error JavaScript
+            // Sebelumnya ada karakter 's' yang salah di baris ini, yang menghentikan eksekusi script.
+
             registerForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const formData = new FormData(registerForm);
+                // [PERBAIKAN PATH]
                 const response = await fetch('register.php', {
                     method: 'POST',
                     body: formData
@@ -790,12 +922,13 @@ if ($result_banners) {
                 });
             });
 
-            // [DITAMBAHKAN] Logika untuk membuat kartu bisa diklik
             document.querySelectorAll('.menu-card-clickable').forEach(card => {
                 card.addEventListener('click', function(e) {
+                    // Jangan lakukan apa-apa jika yang diklik adalah tombol di dalam kartu
                     if (e.target.closest('button')) {
                         return;
                     }
+                    // Cari tombol submit di dalam kartu ini dan klik secara programatis
                     const submitButton = this.querySelector('.add-to-cart-form button[type="submit"]');
                     if (submitButton && !submitButton.disabled) {
                         submitButton.click();
@@ -817,6 +950,7 @@ if ($result_banners) {
                             updateCartUI(response);
                         } else {
                             showToast(response.message, false);
+                            // Muat ulang data keranjang untuk menampilkan stok yang benar
                             updateCartData();
                         }
                     }

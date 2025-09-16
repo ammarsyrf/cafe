@@ -12,12 +12,12 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_
     $order_details = null;
     $order_items = [];
 
-    // Ambil data pesanan utama
+    // [DIPERBAIKI] Ambil data pesanan utama, join ke tabel 'members' untuk nama pelanggan
     $sql_order = "SELECT o.*, 
-                         COALESCE(u_customer.username, o.customer_name, 'Guest') as customer_name_final, 
+                         COALESCE(NULLIF(TRIM(mem.name), ''), NULLIF(TRIM(o.customer_name), ''), 'Guest') as customer_name_final, 
                          u_cashier.name as cashier_name
                   FROM orders o 
-                  LEFT JOIN users u_customer ON o.user_id = u_customer.id
+                  LEFT JOIN members mem ON o.user_id = mem.id
                   LEFT JOIN users u_cashier ON o.cashier_id = u_cashier.id
                   WHERE o.id = ?";
 
@@ -30,7 +30,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_
             $order_details = $result_order->fetch_assoc();
 
             // Ambil item pesanan yang terkait
-            $sql_items = "SELECT oi.quantity, m.name, m.price as price, (oi.quantity * m.price) as subtotal
+            $sql_items = "SELECT oi.quantity, m.name, oi.price as price, (oi.quantity * oi.price) as subtotal
                           FROM order_items oi
                           JOIN menu m ON oi.menu_id = m.id
                           WHERE oi.order_id = ?";
@@ -71,12 +71,12 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
     $output = fopen('php://output', 'w');
     fputcsv($output, ['ID Pesanan', 'Tanggal', 'Nama Pelanggan', 'Total Bayar', 'Metode Pembayaran', 'Kasir']);
 
-    // Query untuk ekspor, ditambahkan metode pembayaran dan nama kasir
+    // [DIPERBAIKI] Query untuk ekspor, join ke tabel 'members' untuk nama pelanggan
     $sql_export = "SELECT o.id, o.created_at, o.total_amount, o.payment_method,
-                          COALESCE(u.username, o.customer_name, 'Guest') as customer_name,
+                          COALESCE(NULLIF(TRIM(mem.name), ''), NULLIF(TRIM(o.customer_name), ''), 'Guest') as customer_name,
                           COALESCE(uc.name, 'N/A') as cashier_name
                    FROM orders o
-                   LEFT JOIN users u ON o.user_id = u.id
+                   LEFT JOIN members mem ON o.user_id = mem.id
                    LEFT JOIN users uc ON o.cashier_id = uc.id
                    WHERE DATE(o.created_at) BETWEEN ? AND ?
                    ORDER BY o.created_at ASC";
@@ -117,13 +117,13 @@ $total_transactions = 0;
 $best_seller = ['name' => 'N/A', 'quantity' => 0];
 $orders_data = [];
 
-// Query untuk mengambil data pesanan
+// Query untuk mengambil data pesanan (Query ini sudah benar)
 $sql_orders = "SELECT o.id, o.created_at, o.total_amount, 
-                      COALESCE(u.name, o.customer_name, 'Guest') as customer_name
-               FROM orders o
-               LEFT JOIN members u ON o.user_id = u.id
-               WHERE DATE(o.created_at) BETWEEN ? AND ?
-               ORDER BY o.created_at DESC";
+                       COALESCE(u.name, o.customer_name, 'Guest') as customer_name
+                FROM orders o
+                LEFT JOIN members u ON o.user_id = u.id
+                WHERE DATE(o.created_at) BETWEEN ? AND ?
+                ORDER BY o.created_at DESC";
 
 if ($stmt = $conn->prepare($sql_orders)) {
     $stmt->bind_param("ss", $start_date, $end_date);
@@ -226,19 +226,16 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                     <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Pelanggan</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Bayar (Rp)</th>
-                    <!-- KOLOM AKSI DIHAPUS -->
                 </tr>
             </thead>
             <tbody>
                 <?php if (!empty($orders_data)): ?>
                     <?php foreach ($orders_data as $order): ?>
-                        <!-- [DIUBAH] Tambahkan atribut data-order-id dan class untuk interaksi -->
                         <tr class="hover:bg-gray-100 cursor-pointer" data-order-id="<?= $order['id'] ?>">
                             <td class="px-5 py-4 border-b border-gray-200 text-sm">#<?= $order['id'] ?></td>
                             <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></td>
                             <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium"><?= htmlspecialchars($order['customer_name'] ?? 'Guest') ?></td>
                             <td class="px-5 py-4 border-b border-gray-200 text-sm text-right font-semibold"><?= number_format($order['total_amount'], 0, ',', '.') ?></td>
-                            <!-- Tombol Aksi Dihapus -->
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -251,7 +248,7 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
     </div>
 </div>
 
-<!-- [BARU] Modal untuk Detail Pesanan -->
+<!-- Modal untuk Detail Pesanan -->
 <div id="detailModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 m-4 animate-fade-in-up">
         <div class="flex justify-between items-center border-b pb-3 mb-3">
@@ -259,7 +256,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
             <button id="closeModal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
         </div>
         <div id="modalContent" class="text-sm">
-            <!-- Konten detail akan diisi oleh JavaScript -->
             <div class="text-center py-8">
                 <p class="text-gray-500">Memuat data...</p>
             </div>
@@ -267,7 +263,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
     </div>
 </div>
 
-<!-- [BARU] Script JavaScript untuk Modal -->
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const tableBody = document.querySelector('#report-table tbody');
@@ -278,23 +273,17 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
 
         if (!tableBody || !modal) return;
 
-        // Fungsi untuk membuka modal
         const openModal = () => modal.classList.remove('hidden');
-
-        // Fungsi untuk menutup modal
         const closeModal = () => modal.classList.add('hidden');
 
-        // Event listener untuk baris tabel
         tableBody.addEventListener('click', function(e) {
             const row = e.target.closest('tr');
             if (row && row.dataset.orderId) {
                 const orderId = row.dataset.orderId;
                 openModal();
-                // Tampilkan status loading
                 modalOrderId.textContent = `#${orderId}`;
                 modalContent.innerHTML = '<p class="text-center py-8 text-gray-500">Memuat data...</p>';
 
-                // Ambil data dari server
                 fetch(`laporan.php?action=get_order_details&id=${orderId}`)
                     .then(response => response.json())
                     .then(data => {
@@ -311,9 +300,7 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
             }
         });
 
-        // Fungsi untuk merender konten modal
         function renderModalContent(details, items) {
-            // Format tanggal
             const orderDate = new Date(details.created_at).toLocaleString('id-ID', {
                 day: '2-digit',
                 month: 'long',
@@ -322,7 +309,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                 minute: '2-digit'
             });
 
-            // Bangun HTML untuk item yang dipesan
             let itemsHtml = items.map(item => `
             <div class="flex justify-between items-center py-2 border-b">
                 <div>
@@ -333,7 +319,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
             </div>
         `).join('');
 
-            // Bangun HTML untuk keseluruhan konten modal
             modalContent.innerHTML = `
             <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-4">
                 <div class="text-gray-600">Tanggal:</div>
@@ -365,7 +350,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
         `;
         }
 
-        // Fungsi helper untuk format Rupiah
         function formatRupiah(angka) {
             return new Intl.NumberFormat('id-ID', {
                 style: 'currency',
@@ -374,7 +358,6 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
             }).format(angka);
         }
 
-        // Event listener untuk tombol close dan background modal
         closeModalBtn.addEventListener('click', closeModal);
         modal.addEventListener('click', function(e) {
             if (e.target === modal) {

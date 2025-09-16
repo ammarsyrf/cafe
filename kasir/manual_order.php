@@ -8,15 +8,17 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require_once '../db_connect.php';
 
+// [PERBAIKAN SESI] Menyesuaikan dengan struktur sesi yang benar
 // Cek apakah user sudah login dan memiliki peran sebagai kasir
-if (!isset($_SESSION['id']) || $_SESSION['role'] !== 'cashier') {
+if (!isset($_SESSION['kasir']) || $_SESSION['kasir']['role'] !== 'cashier') {
+    // Redirect ke halaman login yang benar
     header("Location: login_kasir.php?error=Anda harus login sebagai kasir untuk mengakses halaman ini.");
     exit();
 }
 
-// Ambil informasi kasir dari sesi
-$kasir_id = $_SESSION['id'];
-$kasir_name = $_SESSION['username'];
+// Ambil informasi kasir dari sesi yang benar
+$kasir_id = $_SESSION['kasir']['id'];
+$kasir_name = htmlspecialchars($_SESSION['kasir']['name']);
 
 
 // =========================================================================
@@ -50,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action']) && $_POST['action'] === 'create_manual_order') {
         $order_type = $_POST['order_type'];
         $customer_name = !empty($_POST['customer_name']) ? trim($_POST['customer_name']) : 'Guest';
-        $table_number = $_POST['table_number'] ? (int)$_POST['table_number'] : NULL;
+        $table_number = !empty($_POST['table_number']) ? (int)$_POST['table_number'] : NULL;
         $items = json_decode($_POST['items_json'], true);
         $total_amount = (float)$_POST['total_amount'];
 
@@ -65,28 +67,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $table_id = NULL;
         if ($table_number) {
+            // LOGIKA "BACKUP" UNTUK NOMOR MEJA:
+            // 1. Cek apakah nomor meja yang diinput sudah ada di database.
             $sql_get_table_id = "SELECT id FROM tables WHERE table_number = ?";
             $stmt_get_table_id = $conn->prepare($sql_get_table_id);
             $stmt_get_table_id->bind_param("i", $table_number);
             $stmt_get_table_id->execute();
             $result_get_table_id = $stmt_get_table_id->get_result();
+
             if ($result_get_table_id->num_rows > 0) {
+                // 2. Jika ada, gunakan ID meja yang sudah ada.
                 $table_id = $result_get_table_id->fetch_assoc()['id'];
+            } else {
+                // 3. Jika tidak ada, buat entri meja baru secara otomatis (ini adalah "backup"-nya).
+                //    Ini memastikan nomor meja yang diinput manual oleh kasir akan selalu tercatat.
+                $sql_insert_table = "INSERT INTO tables (table_number) VALUES (?)";
+                $stmt_insert_table = $conn->prepare($sql_insert_table);
+                $stmt_insert_table->bind_param("i", $table_number);
+                $stmt_insert_table->execute();
+                // 4. Gunakan ID dari meja yang baru saja dibuat untuk pesanan ini.
+                $table_id = $conn->insert_id;
+                $stmt_insert_table->close();
             }
+            $stmt_get_table_id->close();
         }
+
 
         // PENJELASAN: Untuk pesanan manual, status langsung 'completed' (selesai)
         // dan metode pembayaran adalah 'manual_cash' (tunai manual).
         $status = 'completed';
         $payment_method = 'manual_cash';
+        $user_id = NULL;
 
-        // PERBAIKAN: Menambahkan cashier_id untuk mencatat siapa yang memproses pesanan manual
         $sql_insert_order = "INSERT INTO orders (user_id, cashier_id, table_id, order_type, customer_name, subtotal, tax, total_amount, payment_method, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $stmt_insert_order = $conn->prepare($sql_insert_order);
 
-        // PERBAIKAN KRUSIAL: Tipe data pada bind_param disesuaikan agar cocok dengan variabel (iiissdddss)
-        // Sebelumnya: "iiisssddds" -> salah, menyebabkan error dan data tidak tersimpan
-        $stmt_insert_order->bind_param("iiissdddss", $kasir_id, $kasir_id, $table_id, $order_type, $customer_name, $subtotal, $tax, $total_amount, $payment_method, $status);
+        $stmt_insert_order->bind_param("sisssdddss", $user_id, $kasir_id, $table_id, $order_type, $customer_name, $subtotal, $tax, $total_amount, $payment_method, $status);
         $stmt_insert_order->execute();
         $order_id = $conn->insert_id;
 
@@ -102,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt_insert_trans->bind_param("iddds", $order_id, $total_amount, $amount_given, $change_amount, $payment_method);
         $stmt_insert_trans->execute();
 
-        header("Location: kasir.php?message=Pesanan+manual+berhasil+dibuat");
+        header("Location: index.php?message=Pesanan+manual+berhasil+dibuat");
         exit();
     }
 }
@@ -180,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <p class="font-semibold text-lg"><?= htmlspecialchars($kasir_name) ?></p>
                 </div>
                 <nav>
-                    <a href="kasir.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Daftar Pesanan</a>
+                    <a href="index.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Daftar Pesanan</a>
                     <a href="manual_order.php" class="block py-2.5 px-4 rounded transition duration-200 bg-gray-900 font-semibold">Manual Order</a>
                 </nav>
             </div>

@@ -6,8 +6,8 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
-// Cek apakah user sudah login sebagai member, jika tidak, redirect ke halaman login
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'member') {
+// [PERBAIKAN LOGIKA SESI] Cek apakah user sudah login dengan memeriksa 'ruang' session yang benar
+if (!isset($_SESSION['member']) || $_SESSION['member']['role'] !== 'member') {
     header('Location: login.php'); // Asumsi ada halaman login.php
     exit();
 }
@@ -19,7 +19,8 @@ require_once 'config.php'; // Untuk BASE_URL
 define('UPLOAD_DIR', __DIR__ . '/uploads/profiles/');
 define('UPLOAD_URL', BASE_URL . 'uploads/profiles/');
 
-$member_id = $_SESSION['user_id'];
+// [PERBAIKAN LOGIKA SESI] Ambil ID dari 'ruang' session yang benar
+$member_id = $_SESSION['member']['id'];
 $error_message = '';
 $success_message = '';
 
@@ -38,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         if (in_array($file['type'], $allowed_types)) {
             // Hapus gambar lama jika ada
             if ($current_image_url) {
-                $old_file_path = str_replace(BASE_URL, realpath(__DIR__) . '/', $current_image_url);
+                $old_file_path = str_replace(UPLOAD_URL, UPLOAD_DIR, $current_image_url);
                 if (file_exists($old_file_path)) @unlink($old_file_path);
             }
             $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
@@ -56,7 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         $stmt->bind_param("ssssi", $name, $email, $phone, $profile_image_url, $member_id);
         if ($stmt->execute()) {
             $success_message = "Profil berhasil diperbarui.";
-            $_SESSION['user_name'] = $name; // Update nama di session
+            // [PERBAIKAN LOGIKA SESI] Update nama di 'ruang' session yang benar
+            $_SESSION['member']['name'] = $name;
         } else {
             $error_message = "Gagal memperbarui profil.";
         }
@@ -81,20 +83,18 @@ if ($result->num_rows > 0) {
 $stmt_member->close();
 
 // --- AMBIL RIWAYAT PESANAN DARI DATABASE ---
-// Bagian ini bertanggung jawab untuk mengambil data riwayat pesanan dari database.
 $order_history = [];
-// Menyesuaikan query untuk mengambil detail biaya
+// [DIPERBAIKI] Mengubah filter dari o.member_id menjadi o.user_id agar sesuai dengan data login
 $sql_history = "SELECT o.id, o.created_at as order_date, o.status, o.total_amount, o.subtotal, o.tax, o.discount_amount,
-                GROUP_CONCAT(CONCAT(oi.quantity, 'x ', m.name) SEPARATOR ',<br>') as items
-                FROM orders o
-                JOIN order_items oi ON o.id = oi.order_id
-                JOIN menu m ON oi.menu_id = m.id
-                WHERE o.member_id = ? -- Memfilter pesanan berdasarkan ID member dari tabel orders
-                GROUP BY o.id
-                ORDER BY o.created_at DESC";
+                    GROUP_CONCAT(CONCAT(oi.quantity, 'x ', m.name) SEPARATOR ',<br>') as items
+                    FROM orders o
+                    JOIN order_items oi ON o.id = oi.order_id
+                    JOIN menu m ON oi.menu_id = m.id
+                    WHERE o.user_id = ? 
+                    GROUP BY o.id
+                    ORDER BY o.created_at DESC";
 
 $stmt_history = $conn->prepare($sql_history);
-// Mengikat ID member yang sedang login ($member_id) ke dalam query
 $stmt_history->bind_param("i", $member_id);
 $stmt_history->execute();
 $result_history = $stmt_history->get_result();
@@ -131,6 +131,7 @@ $conn->close();
     <!-- Navbar -->
     <nav class="bg-white shadow-sm sticky top-0 z-40">
         <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+            <!-- [PERBAIKAN PATH] Arahkan kembali ke halaman pelanggan -->
             <a href="index.php" class="text-xl font-black text-gray-900 tracking-tighter">KAFE KITA</a>
             <div class="flex items-center space-x-2">
                 <a href="index.php" class="text-gray-800 px-4 py-2 rounded-full font-bold hover:bg-gray-100 text-sm flex items-center">

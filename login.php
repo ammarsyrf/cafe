@@ -1,5 +1,5 @@
 <?php
-// File: login.php
+// File: login_member.php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -40,11 +40,12 @@ if ($result->num_rows === 1) {
 
     // Verifikasi password
     if (password_verify($password, $member['password'])) {
-        // Jika berhasil, simpan data ke session
-        // Nama session 'user_id' dan 'user_name' disesuaikan dengan yang sudah ada di index.php
-        $_SESSION['user_id'] = $member['id'];
-        $_SESSION['user_name'] = $member['name'];
-        $_SESSION['role'] = 'member'; // Set role sebagai member
+        // PERUBAHAN UTAMA: Simpan data ke dalam sub-array 'member'
+        $_SESSION['member'] = [
+            'id' => $member['id'],
+            'name' => $member['name'],
+            'role' => 'member'
+        ];
 
         $response['success'] = true;
         $response['message'] = 'Login berhasil!';

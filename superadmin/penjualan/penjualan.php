@@ -40,17 +40,17 @@ $transactions = [];
  * ==================================================================
  * PEMBARUAN QUERY SQL UNTUK DETAIL PESANAN
  * ==================================================================
- * - Menambahkan LEFT JOIN ke tabel 'members' untuk mengambil nama member.
- * - Menggunakan IF() untuk memprioritaskan nama member jika ada, jika tidak, gunakan customer_name.
- * - Menambahkan flag 'is_member' untuk membedakan pelanggan member dan non-member.
+ * - [DIPERBAIKI] Mengubah join dari tabel 'users' ke 'members' untuk mendapatkan nama member yang benar.
+ * - Menggunakan 'o.user_id' sebagai kunci untuk join ke 'members.id'.
+ * - Logika COALESCE dipertahankan untuk menangani guest dan fallback.
  */
 $sql = "SELECT 
             o.id as transaction_id, 
             o.created_at as transaction_date, 
             o.payment_method,
             o.discount_amount as member_discount,
-            IF(o.member_id IS NOT NULL AND mem.name IS NOT NULL, mem.name, o.customer_name) as customer_name_display,
-            (o.member_id IS NOT NULL AND mem.name IS NOT NULL) as is_member,
+            COALESCE(NULLIF(TRIM(mem.name), ''), NULLIF(TRIM(o.customer_name), ''), 'Guest') as customer_name_display,
+            (o.user_id IS NOT NULL) as is_member,
             cashier.name as cashier_name,
             o.total_amount as total_paid,
             o.status as order_status,
@@ -59,9 +59,9 @@ $sql = "SELECT
             oi.price as item_price
         FROM orders o
         LEFT JOIN users cashier ON o.cashier_id = cashier.id
+        LEFT JOIN members mem ON o.user_id = mem.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu m ON oi.menu_id = m.id
-        LEFT JOIN members mem ON o.member_id = mem.id
         WHERE DATE(o.created_at) BETWEEN ? AND ?
         ORDER BY o.created_at DESC, o.id ASC";
 
@@ -218,7 +218,16 @@ $jumlah_transaksi = count($grouped_transactions);
                                     #<?= $tx['transaction_id'] ?>
                                 </td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($tx['transaction_date'])) ?></td>
-                                <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium text-gray-900"><?= htmlspecialchars($tx['customer_name'] ?? 'Guest') ?></td>
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium">
+                                    <div class="flex items-center">
+                                        <span class="<?= $tx['is_member'] ? 'text-green-700 font-bold' : 'text-gray-900' ?>">
+                                            <?= htmlspecialchars($tx['customer_name']) ?>
+                                        </span>
+                                        <?php if ($tx['is_member']) : ?>
+                                            <span class="ml-2 text-xs font-semibold bg-green-100 text-green-800 px-2 py-0.5 rounded-full">MEMBER</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm">
                                     <?php
                                     if (!empty($tx['cashier_name'])) {

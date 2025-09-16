@@ -1,13 +1,12 @@
 <?php
-// File: logout.php
+// File: logout_kasir.php
 session_start();
 
-// Hapus semua variabel session
-$_SESSION = array();
+// PERUBAHAN UTAMA: Hanya hapus data sesi 'kasir'
+if (isset($_SESSION['cashier'])) {
+    unset($_SESSION['cashier']);
+}
 
-// Hancurkan session
-session_destroy();
-
-// Redirect ke halaman login
+// Redirect ke halaman login kasir
 header("Location: login_kasir.php");
 exit();

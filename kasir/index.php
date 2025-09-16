@@ -13,15 +13,34 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once '../db_connect.php';
-
-// --- Autentikasi ---
-if (!isset($_SESSION['id']) || $_SESSION['role'] !== 'cashier') {
-    header("Location: login_kasir.php");
-    exit();
+// --- PERBAIKAN DI SINI ---
+// "Penjaga" Halaman: Periksa apakah sesi 'kasir' ada.
+// Ini adalah cara yang benar dan cocok dengan halaman login.
+if (!isset($_SESSION['kasir']) || $_SESSION['kasir']['role'] !== 'cashier') {
+    // Jika tidak ada atau rolenya bukan kasir, tendang ke halaman login.
+    header('Location: login_kasir.php');
+    exit(); // Pastikan untuk menghentikan eksekusi script setelah redirect
 }
 
-$cashier_name = $_SESSION['username'] ?? 'Kasir';
-$cashier_id = $_SESSION['id'];
+// Jika sesi ada, kita bisa mengambil data kasir dari dalam array $_SESSION['kasir']
+$cashier_name = htmlspecialchars($_SESSION['kasir']['name']); // NAMA VARIABEL DISESUAIKAN
+$role_kasir = htmlspecialchars($_SESSION['kasir']['role']);
+$cashier_id = $_SESSION['kasir']['id']; // Mengambil ID kasir dari sesi yang benar
+
+
+// [DITAMBAHKAN] Mengambil informasi toko dari database untuk struk
+$settings = [];
+$settings_sql = "SELECT setting_name, setting_value FROM settings WHERE setting_name IN ('cafe_name', 'cafe_address', 'cafe_phone')";
+if ($settings_result = $conn->query($settings_sql)) {
+    while ($row = $settings_result->fetch_assoc()) {
+        $settings[$row['setting_name']] = $row['setting_value'];
+    }
+}
+$cafe_settings = [
+    'name'    => $settings['cafe_name'] ?? 'Nama Cafe Anda',
+    'address' => $settings['cafe_address'] ?? 'Alamat Cafe Anda',
+    'phone'   => $settings['cafe_phone'] ?? 'Telepon Cafe Anda'
+];
 
 
 // =========================================================================
@@ -107,7 +126,7 @@ if (isset($_GET['ajax'])) {
                     </p>
 
                     <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
-                    <form method="POST" action="kasir.php">
+                    <form method="POST" action="index.php">
                         <input type="hidden" name="action" value="process_cash_payment">
                         <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
                         <input type="hidden" name="total_amount" value="<?= $order['total_amount'] ?>">
@@ -157,7 +176,7 @@ if (isset($_GET['ajax'])) {
                     <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
                     <div class="mt-4 flex flex-wrap gap-2">
                         <button data-orderid="<?= $order['id'] ?>" class="view-details-btn bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors text-sm"><i class="fas fa-eye mr-2"></i>Lihat Detail</button>
-                        <form method="POST" action="kasir.php" class="inline-block">
+                        <form method="POST" action="index.php" class="inline-block">
                             <input type="hidden" name="action" value="confirm_non_cash_payment">
                             <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
                             <button type="submit" class="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors text-sm font-semibold"><i class="fas fa-check mr-2"></i>Konfirmasi Pembayaran</button>
@@ -178,7 +197,7 @@ if (isset($_GET['ajax'])) {
         $result_paid = $conn->query($sql_paid);
         if ($result_paid && $result_paid->num_rows > 0) {
             while ($order = $result_paid->fetch_assoc()) {
-                $paid_html .= generate_order_card($order, $cashier_name, $conn, false);
+                $paid_html .= generate_order_card($order, $cashier_name, $conn, false, $cafe_settings);
             }
         } else {
             $paid_html = '<p class="text-gray-500 no-paid-placeholder">Tidak ada pesanan yang perlu dicetak struknya.</p>';
@@ -190,7 +209,7 @@ if (isset($_GET['ajax'])) {
         $result_archived = $conn->query($sql_archived);
         if ($result_archived && $result_archived->num_rows > 0) {
             while ($order = $result_archived->fetch_assoc()) {
-                $archived_html .= generate_order_card($order, $cashier_name, $conn, true);
+                $archived_html .= generate_order_card($order, $cashier_name, $conn, true, $cafe_settings);
             }
         } else {
             $archived_html = '<p class="text-gray-500 no-archive-placeholder">Belum ada struk yang diarsipkan.</p>';
@@ -237,9 +256,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("ii", $cashier_id, $order_id);
         if ($stmt->execute()) {
-            header("Location: kasir.php?message=Pembayaran+non-tunai+berhasil+dikonfirmasi.");
+            header("Location: index.php?message=Pembayaran+non-tunai+berhasil+dikonfirmasi.");
         } else {
-            header("Location: kasir.php?error=Gagal+mengonfirmasi+pembayaran.");
+            header("Location: index.php?error=Gagal+mengonfirmasi+pembayaran.");
         }
         exit();
     }
@@ -253,7 +272,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $change_amount = $amount_given - $total_amount;
 
         if ($amount_given < $total_amount) {
-            header("Location: kasir.php?error=Jumlah+uang+yang+diberikan+kurang.");
+            header("Location: index.php?error=Jumlah+uang+yang+diberikan+kurang.");
             exit();
         }
 
@@ -267,7 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt_insert_trans->bind_param("iddd", $order_id, $total_amount, $amount_given, $change_amount);
         $stmt_insert_trans->execute();
 
-        header("Location: kasir.php?message=Pembayaran+tunai+berhasil+diproses.");
+        header("Location: index.php?message=Pembayaran+tunai+berhasil+diproses.");
         exit();
     }
 }
@@ -277,10 +296,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 //  LOGIC BAGIAN C: Mengambil data untuk Tampilan Halaman
 // =========================================================================
 $base_select = "SELECT 
-                    o.*, 
-                    t.table_number, 
-                    u.name AS member_name,
-                    c.name AS cashier_processor_name
+                       o.*, 
+                       t.table_number, 
+                       u.name AS member_name,
+                       c.name AS cashier_processor_name
                 FROM orders o 
                 LEFT JOIN tables t ON o.table_id = t.id 
                 LEFT JOIN members u ON o.user_id = u.id
@@ -373,7 +392,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                 <p class="font-semibold text-lg"><?= htmlspecialchars($cashier_name) ?></p>
             </div>
             <nav>
-                <a href="kasir.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 bg-gray-700">Daftar Pesanan</a>
+                <a href="index.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 bg-gray-700">Daftar Pesanan</a>
                 <a href="manual_order.php" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700">Manual Order</a>
             </nav>
         </div>
@@ -430,7 +449,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                             </p>
 
                             <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
-                            <form method="POST" action="kasir.php">
+                            <form method="POST" action="index.php">
                                 <input type="hidden" name="action" value="process_cash_payment">
                                 <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
                                 <input type="hidden" name="total_amount" value="<?= $order['total_amount'] ?>">
@@ -481,7 +500,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                             <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
                             <div class="mt-4 flex flex-wrap gap-2">
                                 <button data-orderid="<?= $order['id'] ?>" class="view-details-btn bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors text-sm"><i class="fas fa-eye mr-2"></i>Lihat Detail</button>
-                                <form method="POST" action="kasir.php" class="inline-block">
+                                <form method="POST" action="index.php" class="inline-block">
                                     <input type="hidden" name="action" value="confirm_non_cash_payment">
                                     <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
                                     <button type="submit" class="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors text-sm font-semibold"><i class="fas fa-check mr-2"></i>Konfirmasi Pembayaran</button>
@@ -501,7 +520,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                 <?php if (empty($paid_orders)) : ?>
                     <p class="text-gray-500 no-paid-placeholder">Tidak ada pesanan yang perlu dicetak struknya.</p>
                     <?php else : foreach ($paid_orders as $order) : ?>
-                        <?= generate_order_card($order, $cashier_name, $conn, false) ?>
+                        <?= generate_order_card($order, $cashier_name, $conn, false, $cafe_settings) ?>
                 <?php endforeach;
                 endif; ?>
             </div>
@@ -514,7 +533,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                 <?php if (empty($archived_orders)) : ?>
                     <p class="text-gray-500 no-archive-placeholder">Belum ada struk yang diarsipkan.</p>
                     <?php else : foreach ($archived_orders as $order) : ?>
-                        <?= generate_order_card($order, $cashier_name, $conn, true) ?>
+                        <?= generate_order_card($order, $cashier_name, $conn, true, $cafe_settings) ?>
                 <?php endforeach;
                 endif; ?>
             </div>
@@ -526,7 +545,7 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
 
 <?php
 // Fungsi untuk generate kartu pesanan agar tidak duplikat kode
-function generate_order_card($order, $cashier_name, $conn, $is_archived)
+function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_settings)
 {
     // Ambil detail transaksi (tunai & kembalian) jika metode pembayaran adalah cash
     $transaction_details = null;
@@ -576,9 +595,9 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
         <div class="print-area hidden" id="receipt-<?= $order['id'] ?>">
             <div style="font-family: 'Courier New', Courier, monospace; width: 300px; font-size: 12px; color: black;">
                 <div style="text-align: center;">
-                    <h2 style="font-size: 16px; margin: 0; font-weight: bold;">Cafe Bahagia</h2>
-                    <p style="margin: 0; font-size: 10px;">Jl. Jendral Sudirman No. 123, Bekasi</p>
-                    <p style="margin: 0; font-size: 10px;">Telp: 021-1234-5678</p>
+                    <h2 style="font-size: 16px; margin: 0; font-weight: bold;"><?= htmlspecialchars($cafe_settings['name']) ?></h2>
+                    <p style="margin: 0; font-size: 10px;"><?= htmlspecialchars($cafe_settings['address']) ?></p>
+                    <p style="margin: 0; font-size: 10px;">Telp: <?= htmlspecialchars($cafe_settings['phone']) ?></p>
                 </div>
                 <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
                 <table style="width: 100%; font-size: 10px;">
@@ -754,7 +773,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                     detailsContainer.innerHTML = '<p class="text-center text-gray-500 p-4">Memuat detail...</p>';
                     detailsContainer.classList.add('open');
                     try {
-                        const response = await fetch(`kasir.php?ajax=1&action=get_order_details&order_id=${orderId}`);
+                        const response = await fetch(`index.php?ajax=1&action=get_order_details&order_id=${orderId}`);
                         const result = await response.json();
                         if (result.success) {
                             populateInlineDetails(detailsContainer, result.data);
@@ -809,7 +828,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
         // [PENAMBAHAN: SCRIPT REAL-TIME UPDATE]
         async function fetchLatestOrders() {
             try {
-                const response = await fetch('kasir.php?ajax=1&action=get_latest_orders');
+                const response = await fetch('index.php?ajax=1&action=get_latest_orders');
                 const result = await response.json();
                 if (result.success) {
                     document.getElementById('pending-payment-list').innerHTML = result.data.pending_html;
@@ -838,7 +857,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived)
                 const formData = new FormData();
                 formData.append('action', 'archive_receipt');
                 formData.append('order_id', orderId);
-                const response = await fetch('kasir.php', {
+                const response = await fetch('index.php', {
                     method: 'POST',
                     body: formData
                 });

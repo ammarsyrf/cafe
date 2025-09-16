@@ -1,16 +1,13 @@
 <?php
-// File: logout.php
-
-// Selalu mulai sesi untuk mengakses dan menghapusnya
+// File: logout_member.php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Hapus semua variabel sesi
-$_SESSION = array();
-
-// Hancurkan sesi
-session_destroy();
+// PERUBAHAN UTAMA: Hanya hapus data sesi 'member'
+if (isset($_SESSION['member'])) {
+    unset($_SESSION['member']);
+}
 
 // Redirect ke halaman utama (index.php)
 header("Location: index.php?message=Anda+telah+logout");
