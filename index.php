@@ -259,48 +259,92 @@ function get_category_icon($category)
     return 'fas fa-tag'; // Ikon default
 }
 
-// Data untuk render halaman
+// --- [LOGIKA BARU & DINAMIS] PENGAMBILAN DATA MENU DAN KATEGORI ---
 $table_id = isset($_GET['table']) ? (int)$_GET['table'] : 1;
 $menu_items = [];
 
-// Query SQL untuk memberlakukan urutan kategori spesifik.
-$sql = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available
-        FROM menu
-        WHERE is_available = TRUE
-        ORDER BY
-            CASE
-                WHEN category = 'makanan' THEN 1
-                WHEN category = 'minuman' THEN 2
-                WHEN category = 'snack'   THEN 3
-                WHEN category = 'others'  THEN 4
-                ELSE 99
-            END,
-            name ASC";
-
-$result = $conn->query($sql);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
+// 1. Ambil semua menu yang tersedia dari database
+$sql_menu = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available
+             FROM menu WHERE is_available = TRUE";
+$result_menu = $conn->query($sql_menu);
+if ($result_menu) {
+    while ($row = $result_menu->fetch_assoc()) {
         $menu_items[] = $row;
     }
 }
 
-// Logika pengelompokan yang disederhanakan.
+// 2. Kelompokkan menu berdasarkan kategori dan identifikasi item promo
 $promo_items = [];
 $categories_grouped = [];
 foreach ($menu_items as $item) {
-    $categories_grouped[$item['category']][] = $item;
+    // Gunakan strtolower untuk konsistensi kunci array
+    $category_key = strtolower($item['category']);
+    if (!empty($category_key)) {
+        $categories_grouped[$category_key][] = $item;
+    }
+    // Cek item promo
     if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) {
         $promo_items[] = $item;
     }
 }
 
-// Buat array final untuk ditampilkan
+// 3. Ambil daftar kategori resmi dari tabel `menu_categories` dan buat peta nama asli
+$defined_categories_map = []; // [lowercase_name => Original-CaseName]
+$sql_categories = "SELECT name FROM menu_categories ORDER BY name ASC"; // Urutkan untuk other_categories
+$result_categories = $conn->query($sql_categories);
+if ($result_categories) {
+    while ($row = $result_categories->fetch_assoc()) {
+        $lowercase_name = strtolower($row['name']);
+        // Hanya masukkan kategori jika ada menu di dalamnya
+        if (isset($categories_grouped[$lowercase_name])) {
+            $defined_categories_map[$lowercase_name] = $row['name'];
+        }
+    }
+}
+
+// 4. [PERBAIKAN LOGIKA] Urutkan kategori sesuai prioritas baru
+$all_active_cats = array_keys($defined_categories_map);
+$priority_order = ['makanan', 'minuman', 'snack']; // 'snack' dipindahkan ke sini
+$end_order      = []; // Dikosongkan
+$sorted_category_keys = [];
+
+// Tambahkan kategori utama
+foreach ($priority_order as $p_cat) {
+    if (in_array($p_cat, $all_active_cats)) {
+        $sorted_category_keys[] = $p_cat;
+    }
+}
+
+// Tambahkan kategori lain (yang baru atau tidak terdefinisi dalam urutan)
+$other_categories = array_diff($all_active_cats, $priority_order, $end_order);
+// $other_categories sudah diurutkan secara alfabetis dari query SQL di langkah 3
+foreach ($other_categories as $o_cat) {
+    $sorted_category_keys[] = $o_cat;
+}
+
+// Tambahkan kategori akhir (jika ada, saat ini tidak ada)
+foreach ($end_order as $e_cat) {
+    if (in_array($e_cat, $all_active_cats)) {
+        $sorted_category_keys[] = $e_cat;
+    }
+}
+
+// 5. Buat array final untuk ditampilkan di halaman
 $display_categories = [];
+// Selalu tampilkan seksi 'Promo' di urutan pertama jika ada item promo
 if (!empty($promo_items)) {
     $display_categories['promo'] = $promo_items;
 }
-$display_categories = array_merge($display_categories, $categories_grouped);
 
+// Gabungkan dengan kategori lain sesuai urutan yang sudah dibuat
+foreach ($sorted_category_keys as $category_key) {
+    // Ambil nama asli dari map yang sudah dibuat
+    $original_category_name = $defined_categories_map[$category_key];
+    $display_categories[$original_category_name] = $categories_grouped[$category_key];
+}
+
+
+// --- Sisa Logika (tidak berubah) ---
 $cart_count = array_sum(array_column($_SESSION['cart'] ?? [], 'quantity'));
 
 // Mengambil data banner aktif dari database
@@ -496,7 +540,7 @@ if ($result_banners) {
         <div class="container mx-auto px-4">
             <div class="flex space-x-3 overflow-x-auto whitespace-nowrap">
                 <?php foreach ($display_categories as $category => $items) : ?>
-                    <a href="#category-<?= strtolower(htmlspecialchars($category)) ?>" class="category-nav-item flex items-center space-x-2 text-sm md:text-base font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-full px-4 py-2.5 transition-all duration-300">
+                    <a href="#category-<?= strtolower(htmlspecialchars(str_replace(' ', '-', $category))) ?>" class="category-nav-item flex items-center space-x-2 text-sm md:text-base font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-full px-4 py-2.5 transition-all duration-300">
                         <i class="<?= get_category_icon($category) ?> w-5 text-center text-gray-500"></i>
                         <span><?= htmlspecialchars(ucfirst($category)) ?></span>
                     </a>
@@ -508,47 +552,55 @@ if ($result_banners) {
     <!-- Main Content -->
     <main class="container mx-auto px-4 py-8 md:py-12">
         <div class="space-y-16">
-            <?php foreach ($display_categories as $category => $items) : ?>
-                <section id="category-<?= strtolower(htmlspecialchars($category)) ?>" class="scroll-mt-36 animate-on-scroll">
-                    <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 capitalize mb-8"><?= htmlspecialchars($category) ?></h2>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-10">
-                        <?php foreach ($items as $item) : ?>
-                            <!-- [PERUBAHAN] Kartu Menu dengan border dan padding -->
-                            <div class="bg-white rounded-2xl p-4 flex flex-col group border border-gray-100 shadow-md hover:shadow-xl transition-shadow duration-300 <?= $item['stock'] > 0 ? 'menu-card-clickable cursor-pointer' : 'opacity-60' ?>">
-                                <div class="h-56 w-full rounded-xl overflow-hidden relative mb-4">
-                                    <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
-                                    <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
-                                        <div class="absolute top-3 right-3 bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">PROMO</div>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="flex-grow">
-                                    <h3 class="text-lg font-bold text-gray-800 mb-1 truncate"><?= htmlspecialchars($item['name']) ?></h3>
-                                    <p class="text-gray-500 text-sm mb-3 line-clamp-2"><?= htmlspecialchars($item['description']) ?></p>
-                                </div>
-                                <div class="flex items-center justify-between mt-auto">
-                                    <div class="flex flex-col items-start">
+            <?php if (empty($display_categories)): ?>
+                <div class="text-center py-16">
+                    <i class="fas fa-store-slash text-6xl text-gray-300 mb-4"></i>
+                    <h2 class="text-2xl font-bold text-gray-700">Mohon Maaf</h2>
+                    <p class="text-gray-500 mt-2">Saat ini belum ada menu yang tersedia.</p>
+                </div>
+            <?php else: ?>
+                <?php foreach ($display_categories as $category => $items) : ?>
+                    <section id="category-<?= strtolower(htmlspecialchars(str_replace(' ', '-', $category))) ?>" class="scroll-mt-36 animate-on-scroll">
+                        <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 capitalize mb-8"><?= htmlspecialchars($category) ?></h2>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-10">
+                            <?php foreach ($items as $item) : ?>
+                                <!-- [PERUBAHAN] Kartu Menu dengan border dan padding -->
+                                <div class="bg-white rounded-2xl p-4 flex flex-col group border border-gray-100 shadow-md hover:shadow-xl transition-shadow duration-300 <?= $item['stock'] > 0 ? 'menu-card-clickable cursor-pointer' : 'opacity-60' ?>">
+                                    <div class="h-56 w-full rounded-xl overflow-hidden relative mb-4">
+                                        <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
                                         <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
-                                            <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['discount_price'], 0, ',', '.') ?></span>
-                                            <del class="text-gray-400 text-sm -mt-1">Rp<?= number_format($item['price'], 0, ',', '.') ?></del>
-                                        <?php else : ?>
-                                            <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['price'], 0, ',', '.') ?></span>
+                                            <div class="absolute top-3 right-3 bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">PROMO</div>
                                         <?php endif; ?>
                                     </div>
-                                    <form class="add-to-cart-form">
-                                        <input type="hidden" name="action" value="add_to_cart">
-                                        <input type="hidden" name="menu_id" value="<?= $item['id'] ?>">
-                                        <input type="hidden" name="is_ajax" value="1">
-                                        <button type="submit" <?= $item['stock'] == 0 ? 'disabled' : '' ?> class="bg-gray-800 text-white w-10 h-10 rounded-full font-semibold text-lg hover:bg-gray-900 disabled:bg-gray-200 disabled:cursor-not-allowed transform transition-transform active:scale-90">+</button>
-                                    </form>
+                                    <div class="flex-grow">
+                                        <h3 class="text-lg font-bold text-gray-800 mb-1 truncate"><?= htmlspecialchars($item['name']) ?></h3>
+                                        <p class="text-gray-500 text-sm mb-3 line-clamp-2"><?= htmlspecialchars($item['description']) ?></p>
+                                    </div>
+                                    <div class="flex items-center justify-between mt-auto">
+                                        <div class="flex flex-col items-start">
+                                            <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
+                                                <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['discount_price'], 0, ',', '.') ?></span>
+                                                <del class="text-gray-400 text-sm -mt-1">Rp<?= number_format($item['price'], 0, ',', '.') ?></del>
+                                            <?php else : ?>
+                                                <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['price'], 0, ',', '.') ?></span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <form class="add-to-cart-form">
+                                            <input type="hidden" name="action" value="add_to_cart">
+                                            <input type="hidden" name="menu_id" value="<?= $item['id'] ?>">
+                                            <input type="hidden" name="is_ajax" value="1">
+                                            <button type="submit" <?= $item['stock'] == 0 ? 'disabled' : '' ?> class="bg-gray-800 text-white w-10 h-10 rounded-full font-semibold text-lg hover:bg-gray-900 disabled:bg-gray-200 disabled:cursor-not-allowed transform transition-transform active:scale-90">+</button>
+                                        </form>
+                                    </div>
+                                    <?php if ($item['stock'] == 0) : ?>
+                                        <p class="text-red-500 text-xs font-semibold mt-2">Stok habis</p>
+                                    <?php endif; ?>
                                 </div>
-                                <?php if ($item['stock'] == 0) : ?>
-                                    <p class="text-red-500 text-xs font-semibold mt-2">Stok habis</p>
-                                <?php endif; ?>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                </section>
-            <?php endforeach; ?>
+                            <?php endforeach; ?>
+                        </div>
+                    </section>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </div>
     </main>
 

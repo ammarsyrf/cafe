@@ -73,10 +73,10 @@ try {
                 <p class="text-sm text-gray-400">Super Admin Panel</p>
             </div>
             <nav class="flex-grow">
-                <a href="<?= BASE_URL ?>superadmin/dashboard.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700">
+                <a href="<?= BASE_URL ?>superadmin/index.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700">
                     <i class="fas fa-tachometer-alt w-6 mr-3"></i> Dashboard
                 </a>
-                <a href="<?= BASE_URL ?>superadmin/kelolamenu.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
+                <a href="<?= BASE_URL ?>superadmin/menu/kelolamenu.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
                     <i class="fas fa-book-open w-6 mr-3"></i> Kelola Menu
                 </a>
                 <a href="<?= BASE_URL ?>superadmin/banner/kelola_banner.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-gray-700 mt-2">
