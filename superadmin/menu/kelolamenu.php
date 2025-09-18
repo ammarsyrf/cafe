@@ -12,7 +12,10 @@ require_once '../../db_connect.php';
 if (isset($_REQUEST['action'])) {
     $action = $_REQUEST['action'];
 
-    // [PERUBAHAN] Penanganan 'Tambah Menu' sekarang menggunakan AJAX dan mengembalikan JSON
+    // [PERBAIKAN] Penanganan 'Tambah Menu' dan 'Update Menu' yang berisi file upload diletakkan di paling atas
+    // sebelum header JSON global diatur, untuk mencegah error output.
+
+    // Handler untuk TAMBAH MENU
     if ($action == 'add_menu' && strtoupper($_SERVER["REQUEST_METHOD"]) === "POST") {
         header('Content-Type: application/json');
         if (empty($_POST['name']) || empty($_POST['category']) || !isset($_POST['price']) || !isset($_POST['stock'])) {
@@ -61,7 +64,6 @@ if (isset($_REQUEST['action'])) {
             $stmt_get_new->execute();
             $new_menu_data = $stmt_get_new->get_result()->fetch_assoc();
             $stmt_get_new->close();
-
             echo json_encode(['success' => true, 'message' => "Menu '" . htmlspecialchars($name) . "' berhasil ditambahkan.", 'data' => $new_menu_data]);
         } else {
             echo json_encode(['success' => false, 'message' => 'Gagal menambahkan menu ke database: ' . $stmt->error]);
@@ -70,7 +72,71 @@ if (isset($_REQUEST['action'])) {
         exit();
     }
 
-    // Header JSON hanya untuk request AJAX.
+    // [PERBAIKAN] Handler untuk UPDATE MENU dipindahkan ke atas
+    if ($action == 'update_menu' && strtoupper($_SERVER["REQUEST_METHOD"]) === "POST") {
+        header('Content-Type: application/json');
+        if (empty($_POST['id']) || empty($_POST['name']) || empty($_POST['category']) || !isset($_POST['price']) || !isset($_POST['stock'])) {
+            echo json_encode(['success' => false, 'message' => 'Semua field yang wajib diisi harus lengkap.']);
+            exit();
+        }
+
+        $id = intval($_POST['id']);
+        $name = trim($_POST['name']);
+        $description = trim($_POST['description'] ?? '');
+        $price = floatval($_POST['price']);
+        $discount_price = isset($_POST['discount_price']) && $_POST['discount_price'] !== '' ? floatval($_POST['discount_price']) : 0;
+        $category = trim($_POST['category']);
+        $stock = intval($_POST['stock']);
+        $is_available = intval($_POST['is_available'] ?? 0);
+        $old_image_url = $_POST['old_image_url'] ?? '';
+        $new_image_url = $old_image_url;
+
+        if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
+            $target_dir = "../uploads/";
+            if (!is_dir($target_dir)) mkdir($target_dir, 0755, true);
+            $file_extension = strtolower(pathinfo($_FILES["image"]["name"], PATHINFO_EXTENSION));
+            $new_filename = uniqid('menu_', true) . '.' . $file_extension;
+            $target_file = $target_dir . $new_filename;
+            $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+            if (in_array($file_extension, $allowed_types)) {
+                if (move_uploaded_file($_FILES["image"]["tmp_name"], $target_file)) {
+                    if (!empty($old_image_url) && strpos($old_image_url, 'uploads/') === 0 && file_exists("../" . $old_image_url)) {
+                        unlink("../" . $old_image_url);
+                    }
+                    $new_image_url = "uploads/" . $new_filename;
+                } else {
+                    echo json_encode(['success' => false, 'message' => 'Gagal mengupload gambar baru.']);
+                    exit();
+                }
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Tipe file gambar tidak valid.']);
+                exit();
+            }
+        }
+
+        $sql = "UPDATE menu SET name = ?, description = ?, price = ?, discount_price = ?, category = ?, stock = ?, image_url = ?, is_available = ? WHERE id = ?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ssddsisii", $name, $description, $price, $discount_price, $category, $stock, $new_image_url, $is_available, $id);
+
+        if ($stmt->execute()) {
+            $stmt_get_updated = $conn->prepare("SELECT id, name, description, price, discount_price, category, stock, image_url, is_available FROM menu WHERE id = ?");
+            $stmt_get_updated->bind_param("i", $id);
+            $stmt_get_updated->execute();
+            $updated_data = $stmt_get_updated->get_result()->fetch_assoc();
+            $stmt_get_updated->close();
+            echo json_encode(['success' => true, 'message' => "Menu '" . htmlspecialchars($name) . "' berhasil diperbarui.", 'data' => $updated_data]);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Gagal memperbarui menu: ' . $stmt->error]);
+        }
+        $stmt->close();
+        exit();
+    }
+
+
+    // ========================================================
+    // Handler untuk API request lainnya (GET, DELETE, dll)
+    // ========================================================
     header('Content-Type: application/json');
     $response = ['success' => false, 'message' => 'Aksi tidak valid.'];
 
@@ -113,66 +179,6 @@ if (isset($_REQUEST['action'])) {
         }
         $stmt_delete->close();
         echo json_encode($response);
-        exit();
-    }
-
-    // [MENU API] Update menu
-    if ($action == 'update_menu' && strtoupper($_SERVER["REQUEST_METHOD"]) === "POST") {
-        if (empty($_POST['id']) || empty($_POST['name']) || empty($_POST['category']) || !isset($_POST['price']) || !isset($_POST['stock'])) {
-            echo json_encode(['success' => false, 'message' => 'Semua field yang wajib diisi harus lengkap.']);
-            exit();
-        }
-
-        $id = intval($_POST['id']);
-        $name = trim($_POST['name']);
-        $description = trim($_POST['description']);
-        $price = floatval($_POST['price']);
-        $discount_price = isset($_POST['discount_price']) && $_POST['discount_price'] !== '' ? floatval($_POST['discount_price']) : 0;
-        $category = trim($_POST['category']);
-        $stock = intval($_POST['stock']);
-        $is_available = intval($_POST['is_available']);
-        $old_image_url = $_POST['old_image_url'];
-        $new_image_url = $old_image_url;
-
-        if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
-            $target_dir = "../uploads/";
-            if (!is_dir($target_dir)) mkdir($target_dir, 0755, true);
-            $file_extension = strtolower(pathinfo($_FILES["image"]["name"], PATHINFO_EXTENSION));
-            $new_filename = uniqid('menu_', true) . '.' . $file_extension;
-            $target_file = $target_dir . $new_filename;
-            $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-
-            if (in_array($file_extension, $allowed_types)) {
-                if (move_uploaded_file($_FILES["image"]["tmp_name"], $target_file)) {
-                    if (!empty($old_image_url) && strpos($old_image_url, 'uploads/') === 0 && file_exists("../" . $old_image_url)) {
-                        unlink("../" . $old_image_url);
-                    }
-                    $new_image_url = "uploads/" . $new_filename;
-                } else {
-                    echo json_encode(['success' => false, 'message' => 'Gagal mengupload gambar baru.']);
-                    exit();
-                }
-            } else {
-                echo json_encode(['success' => false, 'message' => 'Tipe file gambar tidak valid.']);
-                exit();
-            }
-        }
-
-        $sql = "UPDATE menu SET name = ?, description = ?, price = ?, discount_price = ?, category = ?, stock = ?, image_url = ?, is_available = ? WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ssddsisii", $name, $description, $price, $discount_price, $category, $stock, $new_image_url, $is_available, $id);
-
-        if ($stmt->execute()) {
-            $stmt_get_updated = $conn->prepare("SELECT id, name, description, price, discount_price, category, stock, image_url, is_available FROM menu WHERE id = ?");
-            $stmt_get_updated->bind_param("i", $id);
-            $stmt_get_updated->execute();
-            $updated_data = $stmt_get_updated->get_result()->fetch_assoc();
-            $stmt_get_updated->close();
-            echo json_encode(['success' => true, 'message' => "Menu '" . htmlspecialchars($name) . "' berhasil diperbarui.", 'data' => $updated_data]);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Gagal memperbarui menu: ' . $stmt->error]);
-        }
-        $stmt->close();
         exit();
     }
 
@@ -310,7 +316,7 @@ require_once '../includes/header.php';
 
     <div id="ajax-notification-container" class="fixed top-5 right-5 z-[100] w-full max-w-xs sm:max-w-sm"></div>
 
-    <?php if ($success_message_session): ?>
+    <?php if ($success_message_session) : ?>
         <script>
             document.addEventListener('DOMContentLoaded', () => {
                 if (typeof showAjaxNotification === 'function') {
@@ -322,7 +328,6 @@ require_once '../includes/header.php';
 
     <div class="flex flex-col md:flex-row justify-between items-center mb-6 bg-white p-4 rounded-lg shadow-md gap-4">
         <div class="flex flex-col sm:flex-row w-full md:w-auto gap-3">
-            <!-- [PERUBAHAN] Mengubah <a> menjadi <button> -->
             <button id="openAddMenuModalBtn" type="button" class="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg inline-flex items-center justify-center transition-colors">
                 <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"></path>
@@ -344,23 +349,24 @@ require_once '../includes/header.php';
     </div>
 
     <div id="menuGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        <?php if (!empty($menu_items)): ?>
-            <?php foreach ($menu_items as $item): ?>
+        <?php if (!empty($menu_items)) : ?>
+            <?php foreach ($menu_items as $item) : ?>
                 <div class="menu-card bg-white rounded-xl shadow-lg overflow-hidden flex flex-col transition-transform transform hover:-translate-y-2" data-id="<?= $item['id'] ?>" data-name="<?= strtolower(htmlspecialchars($item['name'])) ?>" data-category="<?= strtolower(htmlspecialchars($item['category'])) ?>">
                     <div class="h-48 bg-gray-200 flex items-center justify-center relative">
                         <img src="../<?= !empty($item['image_url']) ? htmlspecialchars($item['image_url']) : 'https://placehold.co/400x300/e2e8f0/64748b?text=Gambar' ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover">
-                        <?php if ($item['discount_price'] > 0 && $item['discount_price'] < $item['price']): ?><span class="absolute top-2 left-2 py-1 px-3 text-xs font-bold rounded-full bg-red-600 text-white animate-pulse">DISKON!</span><?php endif; ?>
+                        <?php if ($item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?><span class="absolute top-2 left-2 py-1 px-3 text-xs font-bold rounded-full bg-red-600 text-white animate-pulse">DISKON!</span><?php endif; ?>
                         <span class="status-badge absolute top-2 right-2 py-1 px-3 text-xs font-semibold rounded-full <?= $item['is_available'] ? 'bg-green-500 text-white' : 'bg-red-500 text-white' ?>"><?= $item['is_available'] ? 'Tersedia' : 'Habis' ?></span>
                     </div>
                     <div class="p-5 flex-grow">
                         <h3 class="text-xl font-bold text-gray-800 mb-2 truncate"><?= htmlspecialchars($item['name']) ?></h3>
                         <p class="text-sm text-gray-600 mb-3 capitalize">Kategori: <span class="font-medium"><?= htmlspecialchars($item['category']) ?></span></p>
                         <div class="price-container">
-                            <?php if ($item['discount_price'] > 0 && $item['discount_price'] < $item['price']): ?>
-                                <div><del class="text-sm text-gray-500">Rp <?= number_format($item['price']) ?></del>
+                            <?php if ($item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
+                                <div>
+                                    <del class="text-sm text-gray-500">Rp <?= number_format($item['price']) ?></del>
                                     <p class="text-lg font-semibold text-red-600">Rp <?= number_format($item['discount_price']) ?></p>
                                 </div>
-                            <?php else: ?>
+                            <?php else : ?>
                                 <p class="text-lg font-semibold text-blue-600">Rp <?= number_format($item['price']) ?></p>
                             <?php endif; ?>
                         </div>
@@ -372,7 +378,7 @@ require_once '../includes/header.php';
                     </div>
                 </div>
             <?php endforeach; ?>
-        <?php else: ?>
+        <?php else : ?>
             <div id="no-menu-placeholder" class="col-span-full bg-white p-12 rounded-lg shadow-md text-center">
                 <h3 class="text-xl font-semibold text-gray-700">Belum Ada Menu</h3>
                 <p class="text-gray-500 mt-2">Silakan klik tombol "Tambah Menu" untuk mulai.</p>
@@ -385,7 +391,7 @@ require_once '../includes/header.php';
 <!-- MODALS -->
 <!-- ================================================================= -->
 
-<!-- [BARU] Modal untuk TAMBAH MENU -->
+<!-- Modal untuk TAMBAH MENU -->
 <div id="addMenuModal" class="fixed inset-0 bg-black bg-opacity-60 z-50 hidden items-center justify-center p-4 transition-opacity duration-300 opacity-0">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl transform transition-transform duration-300 scale-95 max-h-[90vh] flex flex-col">
         <div class="flex justify-between items-center p-4 border-b sticky top-0 bg-white z-10">
@@ -408,7 +414,7 @@ require_once '../includes/header.php';
                         <label for="add_category" class="block text-sm font-medium text-gray-700 mb-1">Kategori <span class="text-red-500">*</span></label>
                         <select id="add_category" name="category" class="w-full px-4 py-2 border border-gray-300 rounded-lg" required>
                             <option value="" disabled selected>Pilih Kategori</option>
-                            <?php foreach ($categories as $category): ?>
+                            <?php foreach ($categories as $category) : ?>
                                 <option value="<?= htmlspecialchars($category) ?>"><?= htmlspecialchars($category) ?></option>
                             <?php endforeach; ?>
                         </select>
@@ -502,8 +508,17 @@ require_once '../includes/header.php';
     </div>
 </div>
 
+<!-- Div tersembunyi untuk menyimpan opsi kategori. -->
+<div id="categoryOptionsContainer" style="display: none;">
+    <?php foreach ($categories as $category) : ?>
+        <option value="<?= htmlspecialchars($category) ?>"><?= htmlspecialchars($category) ?></option>
+    <?php endforeach; ?>
+</div>
+
+
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+
         const htmlspecialchars = (str) => {
             if (typeof str !== 'string') return '';
             return str.replace(/[&<>"']/g, match => ({
@@ -587,22 +602,21 @@ require_once '../includes/header.php';
             const stockClass = item.stock <= 5 && item.stock > 0 ? 'text-yellow-600' : (item.stock == 0 ? 'text-red-600' : 'text-gray-700');
 
             return `<div class="h-48 bg-gray-200 flex items-center justify-center relative">
-                    <img src="${imageUrl}" alt="${htmlspecialchars(item.name)}" class="w-full h-full object-cover">
-                    ${discountBadge} ${availabilityBadge}
-                </div>
-                <div class="p-5 flex-grow">
-                    <h3 class="text-xl font-bold text-gray-800 mb-2 truncate">${htmlspecialchars(item.name)}</h3>
-                    <p class="text-sm text-gray-600 mb-3 capitalize">Kategori: <span class="font-medium">${htmlspecialchars(item.category)}</span></p>
-                    <div class="price-container">${priceHTML}</div>
-                    <p class="stock-text text-sm font-medium mt-2 ${stockClass}">Stok: ${item.stock}</p>
-                </div>
-                <div class="p-4 bg-gray-50 border-t flex justify-end items-center gap-3">
-                    <button type="button" class="edit-menu-btn text-sm bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors" data-id="${item.id}">Edit</button>
-                    <button type="button" class="delete-menu-btn text-sm bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors" data-id="${item.id}" data-name="${htmlspecialchars(item.name)}">Hapus</button>
-                </div>`;
+                        <img src="${imageUrl}" alt="${htmlspecialchars(item.name)}" class="w-full h-full object-cover">
+                        ${discountBadge} ${availabilityBadge}
+                    </div>
+                    <div class="p-5 flex-grow">
+                        <h3 class="text-xl font-bold text-gray-800 mb-2 truncate">${htmlspecialchars(item.name)}</h3>
+                        <p class="text-sm text-gray-600 mb-3 capitalize">Kategori: <span class="font-medium">${htmlspecialchars(item.category)}</span></p>
+                        <div class="price-container">${priceHTML}</div>
+                        <p class="stock-text text-sm font-medium mt-2 ${stockClass}">Stok: ${item.stock}</p>
+                    </div>
+                    <div class="p-4 bg-gray-50 border-t flex justify-end items-center gap-3">
+                        <button type="button" class="edit-menu-btn text-sm bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors" data-id="${item.id}">Edit</button>
+                        <button type="button" class="delete-menu-btn text-sm bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors" data-id="${item.id}" data-name="${htmlspecialchars(item.name)}">Hapus</button>
+                    </div>`;
         };
 
-        // [BARU] Fungsi untuk menambahkan kartu menu baru ke grid
         const addMenuCardToDOM = (item) => {
             const placeholder = document.getElementById('no-menu-placeholder');
             if (placeholder) {
@@ -626,9 +640,6 @@ require_once '../includes/header.php';
             }
         };
 
-        // =================================================================
-        // [BARU] Logika Modal TAMBAH MENU
-        // =================================================================
         const addMenuModal = document.getElementById('addMenuModal');
         const addMenuForm = document.getElementById('addMenuForm');
 
@@ -647,7 +658,7 @@ require_once '../includes/header.php';
                 setTimeout(() => {
                     addMenuModal.classList.add('hidden');
                     addMenuModal.classList.remove('flex');
-                    addMenuForm.reset(); // Reset form saat ditutup
+                    addMenuForm.reset();
                 }, 300);
             }
         };
@@ -679,6 +690,7 @@ require_once '../includes/header.php';
                 showAjaxNotification(result.message, 'success');
                 addMenuCardToDOM(result.data);
                 toggleAddMenuModal(false);
+
             } catch (error) {
                 showAjaxNotification(error.message, 'error');
             } finally {
@@ -687,9 +699,6 @@ require_once '../includes/header.php';
             }
         });
 
-        // =================================================================
-        // Logika Modal EDIT MENU
-        // =================================================================
         const editMenuModal = document.getElementById('editMenuModal');
         const editMenuModalContent = document.getElementById('editMenuModalContent');
 
@@ -756,7 +765,7 @@ require_once '../includes/header.php';
 
         const renderEditForm = (item) => {
             const categoryOptions = document.getElementById('categoryOptionsContainer').innerHTML;
-            editMenuModalContent.innerHTML = `<form id="editMenuForm" class="space-y-6">
+            editMenuModalContent.innerHTML = `<form id="editMenuForm" method="POST" enctype="multipart/form-data" class="space-y-6">
             <input type="hidden" name="action" value="update_menu">
             <input type="hidden" name="id" value="${item.id}">
             <input type="hidden" name="old_image_url" value="${htmlspecialchars(item.image_url || '')}">
@@ -779,10 +788,9 @@ require_once '../includes/header.php';
         </form>`;
             document.getElementById('edit_category').value = item.category;
             document.getElementById('cancelEditMenu').addEventListener('click', () => toggleEditMenuModal(false));
-        };
 
-        editMenuModalContent.addEventListener('submit', async (e) => {
-            if (e.target.id === 'editMenuForm') {
+            // Memasang listener langsung ke form yang baru dibuat.
+            document.getElementById('editMenuForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const form = e.target;
                 const submitButton = form.querySelector('button[type="submit"]');
@@ -790,6 +798,7 @@ require_once '../includes/header.php';
                 submitButton.disabled = true;
                 submitButton.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Menyimpan...</span>`;
                 const formData = new FormData(form);
+
                 try {
                     const response = await fetch('kelolamenu.php', {
                         method: 'POST',
@@ -797,23 +806,26 @@ require_once '../includes/header.php';
                     });
                     const result = await response.json();
                     if (!result.success) throw new Error(result.message);
+
                     showAjaxNotification(result.message, 'success');
                     updateMenuCardInDOM(result.data);
                     toggleEditMenuModal(false);
+
                 } catch (error) {
                     showAjaxNotification(error.message, 'error');
                 } finally {
                     submitButton.disabled = false;
                     submitButton.innerHTML = originalButtonText;
                 }
-            }
-        });
+            });
+        };
 
         document.getElementById('closeEditMenuModal').addEventListener('click', () => toggleEditMenuModal(false));
         editMenuModal.addEventListener('click', (e) => {
             if (e.target === editMenuModal) toggleEditMenuModal(false);
         });
 
+        // Sisa kode JavaScript untuk KATEGORI sama persis
         const categoryModal = document.getElementById('categoryModal');
         const categoryModalContent = categoryModal.querySelector('div > div');
         const openCategoryModalBtn = document.getElementById('openCategoryModalBtn');
@@ -822,21 +834,29 @@ require_once '../includes/header.php';
         const categoryListContainer = document.getElementById('categoryListContainer');
         const categoryError = document.getElementById('category-error-message');
 
-        const categoryOptionsContainer = document.createElement('div');
-        categoryOptionsContainer.id = 'categoryOptionsContainer';
-        categoryOptionsContainer.style.display = 'none';
-        document.body.appendChild(categoryOptionsContainer);
+        const categoryOptionsContainer = document.getElementById('categoryOptionsContainer');
 
         const updateCategoryDropdowns = async () => {
             try {
                 const response = await fetch(`?action=get_categories`);
                 const result = await response.json();
                 if (!result.success) return;
-                let optionsHTML = '';
+
+                let optionsHTML = '<option value="" disabled>Pilih Kategori</option>';
+                let editOptionsHTML = '';
+
                 result.data.forEach(cat => {
                     optionsHTML += `<option value="${htmlspecialchars(cat.name)}">${htmlspecialchars(cat.name)}</option>`;
+                    editOptionsHTML += `<option value="${htmlspecialchars(cat.name)}">${htmlspecialchars(cat.name)}</option>`;
                 });
-                categoryOptionsContainer.innerHTML = optionsHTML;
+
+                const addCategorySelect = document.getElementById('add_category');
+                if (addCategorySelect) {
+                    addCategorySelect.innerHTML = optionsHTML;
+                }
+
+                categoryOptionsContainer.innerHTML = editOptionsHTML;
+
             } catch (e) {
                 console.error("Gagal update dropdown kategori:", e);
             }
@@ -1007,6 +1027,7 @@ require_once '../includes/header.php';
                 }
             }
         });
+
     });
 </script>
 

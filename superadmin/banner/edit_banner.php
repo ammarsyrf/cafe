@@ -63,8 +63,16 @@ $banner = $result->fetch_assoc();
             </div>
 
             <div class="mb-4">
-                <label for="link_url" class="block text-gray-700 text-sm font-bold mb-2">URL Link (Opsional):</label>
-                <input type="url" id="link_url" name="link_url" value="<?= htmlspecialchars($banner['link_url']) ?>" placeholder="Contoh: #category-promo" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                <label for="link_url" class="block text-gray-700 text-sm font-bold mb-2">Link ke Kategori (Opsional):</label>
+                <select id="link_url" name="link_url" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                    <option value="">-- Tidak ada link --</option>
+                    <option value="#category-promo">Promo</option>
+                    <option value="#category-makanan">Makanan</option>
+                    <option value="#category-minuman">Minuman</option>
+                    <option value="#category-snack">Snack</option>
+                    <option value="#category-others">Others</option>
+                </select>
+                <p class="text-xs text-gray-500 mt-1">Pilih kategori tujuan saat banner di-klik.</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">

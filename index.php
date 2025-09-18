@@ -265,7 +265,7 @@ $menu_items = [];
 
 // 1. Ambil semua menu yang tersedia dari database
 $sql_menu = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available
-             FROM menu WHERE is_available = TRUE";
+               FROM menu WHERE is_available = TRUE";
 $result_menu = $conn->query($sql_menu);
 if ($result_menu) {
     while ($row = $result_menu->fetch_assoc()) {
@@ -518,7 +518,7 @@ if ($result_banners) {
                             <div class="swiper-slide relative">
                                 <a href="<?= htmlspecialchars($banner['link_url'] ?? '#') ?>">
                                     <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-                                    <img src="<?= htmlspecialchars($banner['image_url']) ?>" alt="<?= htmlspecialchars($banner['title']) ?>" class="w-full h-56 md:h-80 object-cover">
+                                    <img src="/superadmin/uploads/banners/<?= htmlspecialchars($banner['image_url']) ?>" alt="<?= htmlspecialchars($banner['title']) ?>" class="w-full h-56 md:h-80 object-cover">
                                     <div class="absolute bottom-0 left-0 p-5 md:p-8">
                                         <h2 class="text-white text-2xl md:text-4xl font-extrabold"><?= htmlspecialchars($banner['title']) ?></h2>
                                         <p class="text-white/90 text-sm md:text-base mt-1 max-w-lg"><?= htmlspecialchars($banner['subtitle']) ?></p>
@@ -567,7 +567,8 @@ if ($result_banners) {
                                 <!-- [PERUBAHAN] Kartu Menu dengan border dan padding -->
                                 <div class="bg-white rounded-2xl p-4 flex flex-col group border border-gray-100 shadow-md hover:shadow-xl transition-shadow duration-300 <?= $item['stock'] > 0 ? 'menu-card-clickable cursor-pointer' : 'opacity-60' ?>">
                                     <div class="h-56 w-full rounded-xl overflow-hidden relative mb-4">
-                                        <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
+                                        <!-- [PERBAIKAN] Menambahkan path ../ untuk naik satu direktori -->
+                                        <img src="../superadmin/uploads/menu/<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
                                         <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
                                             <div class="absolute top-3 right-3 bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">PROMO</div>
                                         <?php endif; ?>
@@ -1039,7 +1040,8 @@ if ($result_banners) {
                     cartSummary.classList.remove('hidden');
                     cartContent.innerHTML = data.cart_items.map(item => {
                         const priceDisplay = (item.original_price && item.price < item.original_price) ? `<div><p class="font-bold text-red-600 text-md">${formatCurrency(item.price)}</p><del class="text-xs text-gray-500">${formatCurrency(item.original_price)}</del></div>` : `<p class="font-bold text-gray-800 text-md">${formatCurrency(item.price)}</p>`;
-                        return `<div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm"><div class="flex items-start space-x-3"><img src="${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md"><div><p class="font-bold text-gray-800 text-md">${item.name}</p>${priceDisplay}</div></div><form class="update-cart-form flex flex-col items-end"><div class="flex items-center rounded-full border bg-gray-50 overflow-hidden"><button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button><input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly><button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button></div><input type="hidden" name="action" value="update_quantity"><input type="hidden" name="menu_id" value="${item.id}"><input type="hidden" name="is_ajax" value="1"></form></div>`
+                        // [PERBAIKAN] Menambahkan path ../ untuk gambar di keranjang
+                        return `<div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm"><div class="flex items-start space-x-3"><img src="../superadmin/uploads/menu/${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md"><div><p class="font-bold text-gray-800 text-md">${item.name}</p>${priceDisplay}</div></div><form class="update-cart-form flex flex-col items-end"><div class="flex items-center rounded-full border bg-gray-50 overflow-hidden"><button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button><input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly><button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button></div><input type="hidden" name="action" value="update_quantity"><input type="hidden" name="menu_id" value="${item.id}"><input type="hidden" name="is_ajax" value="1"></form></div>`
                     }).join('');
                     document.getElementById('cart-subtotal').textContent = formatCurrency(data.subtotal);
                     document.getElementById('cart-ppn').textContent = formatCurrency(data.ppn);

@@ -43,7 +43,7 @@ require_once '../includes/header.php';
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div class="mb-4">
                     <label for="order_number" class="block text-gray-700 text-sm font-bold mb-2">Nomor Urut:</label>
-                    <input type="number" id="order_number" name="order_number" value="10" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required>
+                    <input type="number" id="order_number" name="order_number" value="1" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required>
                     <p class="text-xs text-gray-500 mt-1">Semakin kecil angka, semakin awal tampil.</p>
                 </div>
                 <div>
