@@ -73,6 +73,43 @@ function get_cart_data($is_logged_in)
     ];
 }
 
+// [BARU] Handle GET request untuk data add-on (AJAX)
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'get_addons') {
+    header('Content-Type: application/json');
+    $menu_id = isset($_GET['menu_id']) ? (int)$_GET['menu_id'] : 0;
+    if ($menu_id === 0) {
+        echo json_encode(['success' => false, 'message' => 'Menu ID tidak valid.']);
+        exit();
+    }
+
+    $sql = "SELECT ag.id as group_id, ag.name as group_name, ao.id as option_id, ao.name as option_name, ao.price as option_price
+            FROM menu_addons ma
+            JOIN addon_groups ag ON ma.addon_group_id = ag.id
+            JOIN addon_options ao ON ag.id = ao.addon_group_id
+            WHERE ma.menu_id = ?
+            ORDER BY ag.id, ao.id";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $menu_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $addons_data = [];
+    while ($row = $result->fetch_assoc()) {
+        $addons_data[$row['group_id']]['group_name'] = $row['group_name'];
+        $addons_data[$row['group_id']]['group_id'] = $row['group_id'];
+        $addons_data[$row['group_id']]['options'][] = [
+            'id'    => $row['option_id'],
+            'name'  => $row['option_name'],
+            'price' => $row['option_price']
+        ];
+    }
+
+    echo json_encode(['success' => true, 'addons' => array_values($addons_data)]);
+    exit();
+}
+
+
 // Handle GET request untuk data keranjang (AJAX)
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['is_ajax_get_cart'])) {
     header('Content-Type: application/json');
@@ -87,67 +124,110 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
     $response = ['success' => false, 'message' => 'Aksi tidak valid.'];
 
     $action = $_POST['action'] ?? '';
-    $menu_id = isset($_POST['menu_id']) ? (int)$_POST['menu_id'] : 0;
+    // [MODIFIKASI] $menu_id bisa berupa ID keranjang unik (cth: '1_2_5') atau ID menu dasar
+    $menu_id_param = $_POST['menu_id'] ?? 0;
 
     switch ($action) {
         case 'add_to_cart':
-            // Ambil harga normal dan harga diskon
+            $menu_id = (int)$menu_id_param;
             $sql = "SELECT id, name, price, discount_price, stock, image_url FROM menu WHERE id = ? AND is_available = TRUE";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("i", $menu_id);
             $stmt->execute();
             $item = $stmt->get_result()->fetch_assoc();
 
-            if ($item) {
-                $current_stock = $item['stock'];
-                $cart_quantity = isset($_SESSION['cart'][$menu_id]['quantity']) ? $_SESSION['cart'][$menu_id]['quantity'] : 0;
-
-                if ($current_stock > $cart_quantity) {
-                    // Tentukan harga yang akan digunakan (harga diskon jika ada dan valid)
-                    $price_to_use = (isset($item['discount_price']) && $item['discount_price'] > 0) ? $item['discount_price'] : $item['price'];
-
-                    if (isset($_SESSION['cart'][$menu_id])) {
-                        $_SESSION['cart'][$menu_id]['quantity']++;
-                    } else {
-                        $_SESSION['cart'][$menu_id] = [
-                            'id'             => $item['id'],
-                            'name'           => $item['name'],
-                            'price'          => $price_to_use, // Gunakan harga yang sudah ditentukan
-                            'original_price' => $item['price'], // Simpan harga asli untuk display
-                            'quantity'       => 1,
-                            'image'          => $item['image_url']
-                        ];
-                    }
-                    $response['success'] = true;
-                    $response['message'] = "{$item['name']} ditambahkan ke keranjang!";
-                } else {
-                    $response['message'] = "Maaf, stok {$item['name']} tidak mencukupi.";
-                }
-            } else {
+            if (!$item) {
                 $response['message'] = "Menu tidak ditemukan atau tidak tersedia.";
+                break;
+            }
+
+            // [LOGIKA BARU] Proses Add-on
+            $selected_addons_json = $_POST['selected_addons'] ?? '[]';
+            $selected_addons = json_decode($selected_addons_json, true);
+            $addons_price = 0;
+            $addons_details = [];
+            $cart_item_id = (string)$menu_id; // Mulai dengan ID menu dasar
+
+            if (!empty($selected_addons) && is_array($selected_addons)) {
+                $addon_ids = array_column($selected_addons, 'option_id');
+                if (!empty($addon_ids)) {
+                    $placeholders = implode(',', array_fill(0, count($addon_ids), '?'));
+                    $types = str_repeat('i', count($addon_ids));
+                    $sql_addons = "SELECT id, name, price FROM addon_options WHERE id IN ($placeholders)";
+                    $stmt_addons = $conn->prepare($sql_addons);
+                    $stmt_addons->bind_param($types, ...$addon_ids);
+                    $stmt_addons->execute();
+                    $result_addons = $stmt_addons->get_result();
+                    $valid_addons = [];
+                    while ($addon_row = $result_addons->fetch_assoc()) {
+                        $valid_addons[$addon_row['id']] = $addon_row;
+                    }
+
+                    foreach ($selected_addons as $sa) {
+                        if (isset($valid_addons[$sa['option_id']])) {
+                            $addon = $valid_addons[$sa['option_id']];
+                            $addons_price += (float)$addon['price'];
+                            $addons_details[] = [
+                                'group_name'  => $sa['group_name'],
+                                'option_name' => $addon['name'],
+                                'price'       => (float)$addon['price']
+                            ];
+                        }
+                    }
+                    sort($addon_ids);
+                    $cart_item_id .= '_' . implode('_', $addon_ids); // Buat ID unik untuk item di keranjang
+                }
+            }
+
+            $cart_quantity = isset($_SESSION['cart'][$cart_item_id]['quantity']) ? $_SESSION['cart'][$cart_item_id]['quantity'] : 0;
+            if ($item['stock'] > $cart_quantity) {
+                $price_to_use = (isset($item['discount_price']) && $item['discount_price'] > 0) ? $item['discount_price'] : $item['price'];
+                $final_price = (float)$price_to_use + $addons_price;
+
+                if (isset($_SESSION['cart'][$cart_item_id])) {
+                    $_SESSION['cart'][$cart_item_id]['quantity']++;
+                } else {
+                    $_SESSION['cart'][$cart_item_id] = [
+                        'id'             => $item['id'],
+                        'cart_item_id'   => $cart_item_id,
+                        'name'           => $item['name'],
+                        'price'          => $final_price,
+                        'original_price' => $item['price'],
+                        'quantity'       => 1,
+                        'image'          => $item['image_url'],
+                        'addons'         => $addons_details
+                    ];
+                }
+                $response['success'] = true;
+                $response['message'] = "{$item['name']} ditambahkan ke keranjang!";
+            } else {
+                $response['message'] = "Maaf, stok {$item['name']} tidak mencukupi.";
             }
             break;
 
+
         case 'update_quantity':
+            $cart_item_id = (string)$menu_id_param; // Ini adalah ID unik keranjang
             $quantity = isset($_POST['quantity']) ? (int)$_POST['quantity'] : 0;
-            if (isset($_SESSION['cart'][$menu_id])) {
+
+            if (isset($_SESSION['cart'][$cart_item_id])) {
                 if ($quantity > 0) {
-                    // Cek stok sebelum update
+                    $base_menu_id = $_SESSION['cart'][$cart_item_id]['id'];
                     $sql = "SELECT stock FROM menu WHERE id = ?";
                     $stmt = $conn->prepare($sql);
-                    $stmt->bind_param("i", $menu_id);
+                    $stmt->bind_param("i", $base_menu_id);
                     $stmt->execute();
                     $menu_item = $stmt->get_result()->fetch_assoc();
 
                     if ($menu_item && $quantity <= $menu_item['stock']) {
-                        $_SESSION['cart'][$menu_id]['quantity'] = $quantity;
+                        $_SESSION['cart'][$cart_item_id]['quantity'] = $quantity;
                         $response['success'] = true;
                         $response['message'] = "Jumlah item diperbarui.";
                     } else {
                         $response['message'] = "Stok tidak mencukupi.";
                     }
                 } else {
-                    unset($_SESSION['cart'][$menu_id]);
+                    unset($_SESSION['cart'][$cart_item_id]);
                     $response['success'] = true;
                     $response['message'] = "Item dihapus dari keranjang.";
                 }
@@ -155,9 +235,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['is_ajax'])) {
             break;
 
         case 'remove_from_cart':
-            if (isset($_SESSION['cart'][$menu_id])) {
-                $item_name = $_SESSION['cart'][$menu_id]['name'];
-                unset($_SESSION['cart'][$menu_id]);
+            $cart_item_id = (string)$menu_id_param;
+            if (isset($_SESSION['cart'][$cart_item_id])) {
+                $item_name = $_SESSION['cart'][$cart_item_id]['name'];
+                unset($_SESSION['cart'][$cart_item_id]);
                 $response['success'] = true;
                 $response['message'] = "{$item_name} berhasil dihapus.";
             }
@@ -211,19 +292,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt->execute();
         $order_id = $stmt->insert_id;
 
+        // [PERBAIKAN ULANG] Menyiapkan statement di luar loop
+        $sql_item = "INSERT INTO order_items (order_id, menu_id, quantity, price_per_item, selected_addons, total_price) VALUES (?, ?, ?, ?, ?, ?)";
+        $stmt_item = $conn->prepare($sql_item);
+        if ($stmt_item === false) {
+            throw new Exception("Gagal menyiapkan query untuk item pesanan: " . $conn->error);
+        }
+
         // Simpan item pesanan dan kurangi stok
         foreach ($_SESSION['cart'] as $item) {
-            // Harga yang disimpan adalah harga yang ada di keranjang (bisa harga normal/diskon)
-            $sql = "INSERT INTO order_items (order_id, menu_id, quantity, price) VALUES (?, ?, ?, ?)";
-            $stmt_item = $conn->prepare($sql);
-            $stmt_item->bind_param("iiid", $order_id, $item['id'], $item['quantity'], $item['price']);
-            $stmt_item->execute();
 
+            // Definisikan variabel dengan tipe data yang benar
+            $item_menu_id = (int)$item['id'];
+            $item_quantity = (int)$item['quantity'];
+            $item_original_price = (float)$item['original_price'];
+            $item_total_price = (float)$item['price'] * $item_quantity;
+            $item_addons_json = null;
+
+            if (!empty($item['addons'])) {
+                $item_addons_json = json_encode($item['addons']);
+                // Periksa apakah JSON valid, jika tidak, batalkan
+                if ($item_addons_json === false) {
+                    throw new Exception("Gagal meng-encode data add-on untuk menu ID: " . $item_menu_id);
+                }
+            }
+
+            // Bind parameter ke statement yang sudah disiapkan
+            // [PERBAIKAN FINAL] Tipe data untuk parameter ke-4 (price_per_item) adalah 'd' (double)
+            // dan parameter ke-5 (selected_addons) adalah 's' (string).
+            $stmt_item->bind_param(
+                "iiidsd",
+                $order_id,
+                $item_menu_id,
+                $item_quantity,
+                $item_original_price, // price_per_item (double)
+                $item_addons_json,    // selected_addons (string)
+                $item_total_price     // total_price (double)
+            );
+
+
+            if (!$stmt_item->execute()) {
+                throw new Exception("Gagal menyimpan item pesanan (Menu ID: {$item_menu_id}) ke database: " . $stmt_item->error);
+            }
+
+            // Update stok
             $sql_update_stock = "UPDATE menu SET stock = stock - ? WHERE id = ?";
             $stmt_update = $conn->prepare($sql_update_stock);
-            $stmt_update->bind_param("ii", $item['quantity'], $item['id']);
+            $stmt_update->bind_param("ii", $item_quantity, $item_menu_id);
             $stmt_update->execute();
         }
+        $stmt_item->close(); // Tutup statement setelah loop selesai
+
 
         $conn->commit();
 
@@ -232,8 +351,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit();
     } catch (Exception $e) {
         $conn->rollback();
-        // Sebaiknya log error ini: error_log($e->getMessage());
-        header("Location: index.php?table=$table_id&error=Gagal+membuat+pesanan");
+        $errorMessage = urlencode("Terjadi kesalahan: " . $e->getMessage());
+        header("Location: index.php?table=$table_id&error=" . $errorMessage);
         exit();
     }
 }
@@ -264,11 +383,14 @@ $table_id = isset($_GET['table']) ? (int)$_GET['table'] : 1;
 $menu_items = [];
 
 // 1. Ambil semua menu yang tersedia dari database
-$sql_menu = "SELECT id, name, description, price, discount_price, category, stock, image_url, is_available
-               FROM menu WHERE is_available = TRUE";
+$sql_menu = "SELECT m.id, m.name, m.description, m.price, m.discount_price, m.category, m.stock, m.image_url, m.is_available,
+             (SELECT COUNT(*) FROM menu_addons ma WHERE ma.menu_id = m.id) as addon_count
+             FROM menu m WHERE m.is_available = TRUE";
 $result_menu = $conn->query($sql_menu);
 if ($result_menu) {
     while ($row = $result_menu->fetch_assoc()) {
+        // [MODIFIKASI] Tambahkan flag has_addons
+        $row['has_addons'] = $row['addon_count'] > 0;
         $menu_items[] = $row;
     }
 }
@@ -390,7 +512,8 @@ if ($result_banners) {
         }
 
         #cart-drawer,
-        #loginModal {
+        #loginModal,
+        #addonModal {
             transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
         }
 
@@ -553,25 +676,32 @@ if ($result_banners) {
     <!-- Main Content -->
     <main class="container mx-auto px-4 py-8 md:py-12">
         <div class="space-y-16">
-            <?php if (empty($display_categories)): ?>
+            <?php if (empty($display_categories)) : ?>
                 <div class="text-center py-16">
                     <i class="fas fa-store-slash text-6xl text-gray-300 mb-4"></i>
                     <h2 class="text-2xl font-bold text-gray-700">Mohon Maaf</h2>
                     <p class="text-gray-500 mt-2">Saat ini belum ada menu yang tersedia.</p>
                 </div>
-            <?php else: ?>
+            <?php else : ?>
                 <?php foreach ($display_categories as $category => $items) : ?>
                     <section id="category-<?= strtolower(htmlspecialchars(str_replace(' ', '-', $category))) ?>" class="scroll-mt-36 animate-on-scroll">
                         <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 capitalize mb-8"><?= htmlspecialchars($category) ?></h2>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-10">
                             <?php foreach ($items as $item) : ?>
-                                <!-- [PERUBAHAN] Kartu Menu dengan border dan padding -->
-                                <div class="bg-white rounded-2xl p-4 flex flex-col group border border-gray-100 shadow-md hover:shadow-xl transition-shadow duration-300 <?= $item['stock'] > 0 ? 'menu-card-clickable cursor-pointer' : 'opacity-60' ?>">
+                                <!-- [MODIFIKASI] Kartu Menu dengan data attributes untuk Add-on -->
+                                <div class="bg-white rounded-2xl p-4 flex flex-col group border border-gray-100 shadow-md hover:shadow-xl transition-shadow duration-300 <?= $item['stock'] > 0 ? 'menu-card-clickable cursor-pointer' : 'opacity-60' ?>"
+                                    data-menu-id="<?= $item['id'] ?>"
+                                    data-has-addons="<?= $item['has_addons'] ? 'true' : 'false' ?>"
+                                    data-item-name="<?= htmlspecialchars($item['name']) ?>"
+                                    data-item-price="<?= (isset($item['discount_price']) && $item['discount_price'] > 0) ? $item['discount_price'] : $item['price'] ?>">
                                     <div class="h-56 w-full rounded-xl overflow-hidden relative mb-4">
-                                        <!-- [PERBAIKAN] Menggunakan BASE_URL untuk path absolut -->
                                         <img src="<?= BASE_URL ?>superadmin/<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
                                         <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
                                             <div class="absolute top-3 right-3 bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">PROMO</div>
+                                        <?php endif; ?>
+                                        <!-- [BARU] Indikator Add-on -->
+                                        <?php if ($item['has_addons']) : ?>
+                                            <div class="absolute bottom-2 left-2 bg-blue-500 text-white text-xs font-semibold px-2 py-1 rounded-md"><i class="fas fa-plus-circle mr-1"></i> Ada Add-on</div>
                                         <?php endif; ?>
                                     </div>
                                     <div class="flex-grow">
@@ -587,12 +717,7 @@ if ($result_banners) {
                                                 <span class="text-gray-900 font-extrabold text-lg">Rp<?= number_format($item['price'], 0, ',', '.') ?></span>
                                             <?php endif; ?>
                                         </div>
-                                        <form class="add-to-cart-form">
-                                            <input type="hidden" name="action" value="add_to_cart">
-                                            <input type="hidden" name="menu_id" value="<?= $item['id'] ?>">
-                                            <input type="hidden" name="is_ajax" value="1">
-                                            <button type="submit" <?= $item['stock'] == 0 ? 'disabled' : '' ?> class="bg-gray-800 text-white w-10 h-10 rounded-full font-semibold text-lg hover:bg-gray-900 disabled:bg-gray-200 disabled:cursor-not-allowed transform transition-transform active:scale-90">+</button>
-                                        </form>
+                                        <button type="button" <?= $item['stock'] == 0 ? 'disabled' : '' ?> class="bg-gray-800 text-white w-10 h-10 rounded-full font-semibold text-lg hover:bg-gray-900 disabled:bg-gray-200 disabled:cursor-not-allowed transform transition-transform active:scale-90">+</button>
                                     </div>
                                     <?php if ($item['stock'] == 0) : ?>
                                         <p class="text-red-500 text-xs font-semibold mt-2">Stok habis</p>
@@ -736,6 +861,35 @@ if ($result_banners) {
         </div>
     </div>
 
+    <!-- [BARU] Add-on Modal -->
+    <div id="addonModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-[90] p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md m-4 transform scale-95 transition-transform duration-300">
+            <div class="flex justify-between items-center p-5 border-b">
+                <h2 id="addonModalTitle" class="text-xl font-bold text-gray-800">Pilih Add-on</h2>
+                <button id="closeAddonModal" class="text-gray-500 hover:text-gray-800"><i class="fas fa-times text-2xl"></i></button>
+            </div>
+            <form id="addonForm">
+                <div id="addonModalContent" class="p-5 max-h-[60vh] overflow-y-auto">
+                    <!-- Content will be populated by JS -->
+                </div>
+                <div class="p-5 border-t bg-gray-50 rounded-b-2xl">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="text-gray-600 font-medium">Total Harga</span>
+                        <span id="addonModalTotalPrice" class="text-2xl font-extrabold text-gray-900">Rp0</span>
+                    </div>
+                    <input type="hidden" name="action" value="add_to_cart">
+                    <input type="hidden" id="addonMenuId" name="menu_id" value="">
+                    <input type="hidden" name="is_ajax" value="1">
+                    <input type="hidden" id="selectedAddonsInput" name="selected_addons" value="[]">
+                    <button type="submit" class="w-full bg-green-600 text-white font-bold py-3.5 rounded-xl hover:bg-green-700 transition-colors">
+                        <i class="fas fa-cart-plus mr-2"></i>Tambah ke Keranjang
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
     <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -801,6 +955,18 @@ if ($result_banners) {
             const cartLoginButton = document.getElementById('cartLoginButton');
             const cartShowRegister = document.getElementById('cartShowRegister');
 
+            // [BARU] Variabel untuk Add-on Modal
+            const addonModal = document.getElementById('addonModal');
+            const addonModalTitle = document.getElementById('addonModalTitle');
+            const addonModalContent = document.getElementById('addonModalContent');
+            const addonModalTotalPrice = document.getElementById('addonModalTotalPrice');
+            const addonMenuIdInput = document.getElementById('addonMenuId');
+            const closeAddonModal = document.getElementById('closeAddonModal');
+            const addonForm = document.getElementById('addonForm');
+            const selectedAddonsInput = document.getElementById('selectedAddonsInput');
+            let currentItemBasePrice = 0;
+            let currentMenuItemName = '';
+
 
             if (loginCheckboxCart) {
                 loginCheckboxCart.addEventListener('change', (e) => {
@@ -835,6 +1001,9 @@ if ($result_banners) {
             const toggleCartDrawer = (show) => {
                 cartDrawer.classList.toggle('translate-x-full', !show);
                 cartBackdrop.classList.toggle('hidden', !show);
+                if (!show) {
+                    toggleAddonModal(false); // [BARU] Tutup modal addon jika keranjang ditutup
+                }
             };
             const toggleLoginModal = (show) => {
                 if (show) {
@@ -908,21 +1077,19 @@ if ($result_banners) {
                 }
             };
 
-            // Handler untuk form login di modal utama
             const handleModalFormSubmit = (e) => {
                 e.preventDefault();
                 const formData = new FormData(loginForm);
                 performLogin(formData, 'login-error');
             };
 
-            // Handler untuk tombol login di keranjang
             const handleCartLoginClick = (e) => {
                 e.preventDefault();
                 const emailInput = document.getElementById('cart_login_email');
                 const passwordInput = document.getElementById('cart_login_password');
                 const errorEl = document.getElementById('cart-login-error');
 
-                errorEl.textContent = ''; // Hapus pesan error sebelumnya
+                errorEl.textContent = '';
                 if (!emailInput.value || !passwordInput.value) {
                     errorEl.textContent = 'Email dan password harus diisi.';
                     return;
@@ -934,17 +1101,13 @@ if ($result_banners) {
                 performLogin(formData, 'cart-login-error');
             };
 
-            // Terapkan event listener
             if (loginForm) loginForm.addEventListener('submit', handleModalFormSubmit);
             if (cartLoginButton) cartLoginButton.addEventListener('click', handleCartLoginClick);
 
-            // [PERBAIKAN] Menghapus karakter 's' yang menyebabkan error JavaScript
-            // Sebelumnya ada karakter 's' yang salah di baris ini, yang menghentikan eksekusi script.
 
             registerForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const formData = new FormData(registerForm);
-                // [PERBAIKAN PATH]
                 const response = await fetch('register.php', {
                     method: 'POST',
                     body: formData
@@ -967,30 +1130,61 @@ if ($result_banners) {
                 }
             });
             const formatCurrency = (amount) => `Rp${Number(amount).toLocaleString('id-ID')}`;
-            document.querySelectorAll('.add-to-cart-form').forEach(form => {
-                form.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    const response = await sendCartAction(new FormData(form));
-                    if (response) {
-                        showToast(response.message, response.success);
-                        if (response.success) updateCartUI(response);
-                    }
-                });
-            });
 
+            // [LOGIKA BARU] Klik pada kartu menu
             document.querySelectorAll('.menu-card-clickable').forEach(card => {
                 card.addEventListener('click', function(e) {
-                    // Jangan lakukan apa-apa jika yang diklik adalah tombol di dalam kartu
+                    // Mencegah klik ganda jika tombol + di dalam kartu ditekan
                     if (e.target.closest('button')) {
+                        // Biarkan event default tombol berjalan
                         return;
                     }
-                    // Cari tombol submit di dalam kartu ini dan klik secara programatis
-                    const submitButton = this.querySelector('.add-to-cart-form button[type="submit"]');
-                    if (submitButton && !submitButton.disabled) {
-                        submitButton.click();
+
+                    const menuId = this.dataset.menuId;
+                    const hasAddons = this.dataset.hasAddons === 'true';
+
+                    if (hasAddons) {
+                        openAddonModal(menuId);
+                    } else {
+                        const formData = new FormData();
+                        formData.append('action', 'add_to_cart');
+                        formData.append('menu_id', menuId);
+                        formData.append('is_ajax', '1');
+                        sendCartAction(formData).then(response => {
+                            if (response) {
+                                showToast(response.message, response.success);
+                                if (response.success) updateCartUI(response);
+                            }
+                        });
                     }
                 });
+
+                // Tambahkan event listener terpisah untuk tombol '+'
+                const addButton = card.querySelector('button');
+                if (addButton) {
+                    addButton.addEventListener('click', function(e) {
+                        e.stopPropagation(); // Hentikan event agar tidak trigger klik kartu
+                        const menuId = card.dataset.menuId;
+                        const hasAddons = card.dataset.hasAddons === 'true';
+
+                        if (hasAddons) {
+                            openAddonModal(menuId);
+                        } else {
+                            const formData = new FormData();
+                            formData.append('action', 'add_to_cart');
+                            formData.append('menu_id', menuId);
+                            formData.append('is_ajax', '1');
+                            sendCartAction(formData).then(response => {
+                                if (response) {
+                                    showToast(response.message, response.success);
+                                    if (response.success) updateCartUI(response);
+                                }
+                            });
+                        }
+                    });
+                }
             });
+
 
             cartContent.addEventListener('click', async (e) => {
                 if (e.target.matches('.quantity-btn')) {
@@ -1006,7 +1200,6 @@ if ($result_banners) {
                             updateCartUI(response);
                         } else {
                             showToast(response.message, false);
-                            // Muat ulang data keranjang untuk menampilkan stok yang benar
                             updateCartData();
                         }
                     }
@@ -1042,9 +1235,39 @@ if ($result_banners) {
                     emptyCartMessage.classList.add('hidden');
                     cartSummary.classList.remove('hidden');
                     cartContent.innerHTML = data.cart_items.map(item => {
-                        const priceDisplay = (item.original_price && item.price < item.original_price) ? `<div><p class="font-bold text-red-600 text-md">${formatCurrency(item.price)}</p><del class="text-xs text-gray-500">${formatCurrency(item.original_price)}</del></div>` : `<p class="font-bold text-gray-800 text-md">${formatCurrency(item.price)}</p>`;
-                        // [PERBAIKAN] Menggunakan BASE_URL untuk path absolut di keranjang
-                        return `<div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm"><div class="flex items-start space-x-3"><img src="${BASE_URL}superadmin/${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md"><div><p class="font-bold text-gray-800 text-md">${item.name}</p>${priceDisplay}</div></div><form class="update-cart-form flex flex-col items-end"><div class="flex items-center rounded-full border bg-gray-50 overflow-hidden"><button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button><input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly><button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button></div><input type="hidden" name="action" value="update_quantity"><input type="hidden" name="menu_id" value="${item.id}"><input type="hidden" name="is_ajax" value="1"></form></div>`
+                        const priceDisplay = (item.original_price && item.price > item.original_price) ? `<p class="font-bold text-gray-800 text-md">${formatCurrency(item.price)}</p>` : `<p class="font-bold text-gray-800 text-md">${formatCurrency(item.price)}</p>`;
+
+
+                        // [MODIFIKASI] Tampilkan addons di keranjang
+                        let addonsHTML = '';
+                        if (item.addons && item.addons.length > 0) {
+                            addonsHTML = '<ul class="text-xs text-gray-500 mt-1 pl-1 space-y-0.5">';
+                            item.addons.forEach(addon => {
+                                addonsHTML += `<li>- ${addon.option_name} ${addon.price > 0 ? `(+${formatCurrency(addon.price)})` : ''}</li>`;
+                            });
+                            addonsHTML += '</ul>';
+                        }
+
+                        return `<div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm">
+                                    <div class="flex items-start space-x-3 w-full">
+                                        <img src="${BASE_URL}superadmin/${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md">
+                                        <div class="flex-grow">
+                                            <p class="font-bold text-gray-800 text-md">${item.name}</p>
+                                            ${addonsHTML}
+                                            <div class="mt-2">${priceDisplay}</div>
+                                        </div>
+                                    </div>
+                                    <form class="update-cart-form flex flex-col items-end">
+                                        <div class="flex items-center rounded-full border bg-gray-50 overflow-hidden">
+                                            <button data-change="-1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">-</button>
+                                            <input type="number" name="quantity" value="${item.quantity}" class="w-10 text-center font-semibold bg-transparent border-none focus:ring-0" readonly>
+                                            <button data-change="1" class="quantity-btn px-2 py-1 text-lg font-bold text-gray-600 hover:bg-gray-200">+</button>
+                                        </div>
+                                        <input type="hidden" name="action" value="update_quantity">
+                                        <input type="hidden" name="menu_id" value="${item.cart_item_id}">
+                                        <input type="hidden" name="is_ajax" value="1">
+                                    </form>
+                                </div>`;
                     }).join('');
                     document.getElementById('cart-subtotal').textContent = formatCurrency(data.subtotal);
                     document.getElementById('cart-ppn').textContent = formatCurrency(data.ppn);
@@ -1082,11 +1305,12 @@ if ($result_banners) {
                 displayPaymentDetails(urlParams.get('payment_method'), urlParams.get('total_amount'));
             }
             if (urlParams.has('error')) {
-                showToast(urlParams.get('error'), false);
+                showToast(decodeURIComponent(urlParams.get('error')), false);
                 const cleanUrl = new URL(window.location.href);
                 cleanUrl.searchParams.delete('error');
                 window.history.replaceState({}, '', cleanUrl);
             }
+
 
             function displayPaymentDetails(method, total) {
                 const formattedTotal = formatCurrency(total);
@@ -1108,6 +1332,109 @@ if ($result_banners) {
                 document.getElementById('payment-content').innerHTML = contentHTML;
                 paymentDetailsModal.classList.remove('hidden');
             }
+
+            // [LOGIKA BARU] Fungsi-fungsi untuk Add-on Modal
+            async function openAddonModal(menuId) {
+                const card = document.querySelector(`.menu-card-clickable[data-menu-id='${menuId}']`);
+                if (!card) return;
+
+                currentItemBasePrice = parseFloat(card.dataset.itemPrice);
+                currentMenuItemName = card.dataset.itemName;
+
+                addonModalTitle.textContent = currentMenuItemName;
+                addonMenuIdInput.value = menuId;
+
+                try {
+                    const response = await fetch(`index.php?action=get_addons&menu_id=${menuId}`);
+                    const data = await response.json();
+                    if (data.success && data.addons) {
+                        populateAddonModal(data.addons);
+                        toggleAddonModal(true);
+                    } else {
+                        showToast('Gagal memuat add-on.', false);
+                    }
+                } catch (error) {
+                    console.error('Error fetching addons:', error);
+                    showToast('Terjadi kesalahan jaringan saat memuat add-on.', false);
+                }
+            }
+
+            function populateAddonModal(addonGroups) {
+                addonModalContent.innerHTML = '';
+                addonGroups.forEach((group) => {
+                    const groupEl = document.createElement('div');
+                    groupEl.className = 'mb-6';
+
+                    let optionsHTML = group.options.map((option, optIndex) => `
+                        <label class="flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50 transition-all">
+                            <span class="font-medium text-sm text-gray-800">${option.name}</span>
+                            <div class="flex items-center space-x-3">
+                                <span class="font-semibold text-sm text-blue-600">+${formatCurrency(option.price)}</span>
+                                <input type="radio" name="addon_group_${group.group_id}" value="${option.id}"
+                                    data-price="${option.price}"
+                                    data-group-id="${group.group_id}"
+                                    data-group-name="${group.group_name}"
+                                    data-option-name="${option.name}"
+                                    class="h-5 w-5 text-blue-600 border-gray-300 focus:ring-blue-500"
+                                    ${optIndex === 0 ? 'checked' : ''}>
+                            </div>
+                        </label>
+                    `).join('');
+
+                    groupEl.innerHTML = `
+                        <h3 class="text-md font-semibold text-gray-800 mb-3">${group.group_name}</h3>
+                        <div class="space-y-2">${optionsHTML}</div>`;
+                    addonModalContent.appendChild(groupEl);
+                });
+                updateAddonTotalPrice();
+                addonModalContent.querySelectorAll('input[type="radio"]').forEach(radio => {
+                    radio.addEventListener('change', updateAddonTotalPrice);
+                });
+            }
+
+            function updateAddonTotalPrice() {
+                let addonsPrice = 0;
+                const selectedOptions = [];
+                const checkedRadios = addonModalContent.querySelectorAll('input[type="radio"]:checked');
+
+                checkedRadios.forEach(radio => {
+                    addonsPrice += parseFloat(radio.dataset.price);
+                    selectedOptions.push({
+                        group_id: radio.dataset.groupId,
+                        group_name: radio.dataset.groupName,
+                        option_id: radio.value,
+                        option_name: radio.dataset.optionName
+                    });
+                });
+                const totalPrice = currentItemBasePrice + addonsPrice;
+                addonModalTotalPrice.textContent = formatCurrency(totalPrice);
+                selectedAddonsInput.value = JSON.stringify(selectedOptions);
+            }
+
+            function toggleAddonModal(show) {
+                if (show) {
+                    addonModal.classList.remove('hidden');
+                    setTimeout(() => addonModal.querySelector('div').classList.remove('scale-95'), 10);
+                } else {
+                    addonModal.querySelector('div').classList.add('scale-95');
+                    setTimeout(() => addonModal.classList.add('hidden'), 300);
+                }
+            }
+
+            closeAddonModal.addEventListener('click', () => toggleAddonModal(false));
+            addonForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const response = await sendCartAction(new FormData(addonForm));
+                if (response) {
+                    showToast(response.message, response.success);
+                    if (response.success) {
+                        updateCartUI(response);
+                        toggleAddonModal(false);
+                    }
+                }
+            });
+
+
             const categoryNavObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {

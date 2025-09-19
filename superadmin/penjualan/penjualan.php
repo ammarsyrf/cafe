@@ -56,7 +56,7 @@ $sql = "SELECT
             o.status as order_status,
             oi.quantity,
             m.name as menu_name,
-            oi.price as item_price
+            oi.price_per_item as item_price
         FROM orders o
         LEFT JOIN users cashier ON o.cashier_id = cashier.id
         LEFT JOIN members mem ON o.user_id = mem.id
@@ -245,7 +245,7 @@ $jumlah_transaksi = count($grouped_transactions);
                                         </svg>
                                     </span>
                                 </td>
-                                <td class="px-5 py-4 border-b border-gray-200 text-sm capitalize"><?= htmlspecialchars($tx['payment_method'] ?? '-') ?></td>
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm capitalize"><?= str_replace('_', ' ', $tx['payment_method']) ?></td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm text-right text-red-600 font-semibold"><?= number_format($tx['member_discount'] ?? 0, 0, ',', '.') ?></td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm text-right font-bold text-gray-900"><?= number_format($tx['total_paid'], 0, ',', '.') ?></td>
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm text-center">

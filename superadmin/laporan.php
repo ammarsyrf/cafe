@@ -30,7 +30,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_
             $order_details = $result_order->fetch_assoc();
 
             // Ambil item pesanan yang terkait
-            $sql_items = "SELECT oi.quantity, m.name, oi.price as price, (oi.quantity * oi.price) as subtotal
+            $sql_items = "SELECT oi.quantity, m.name, oi.price_per_item as price, (oi.quantity * oi.price_per_item) as subtotal
                           FROM order_items oi
                           JOIN menu m ON oi.menu_id = m.id
                           WHERE oi.order_id = ?";
@@ -344,7 +344,7 @@ if ($stmt_bs = $conn->prepare($sql_bestseller)) {
                 </div>
                  <div class="flex justify-between text-sm text-gray-600">
                     <span>Metode Bayar</span>
-                    <span class="capitalize">${details.payment_method}</span>
+                    <span class="capitalize">${details.payment_method.replace('_', ' ')}</span>
                 </div>
             </div>
         `;
