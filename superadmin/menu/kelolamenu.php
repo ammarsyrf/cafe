@@ -33,7 +33,7 @@ if (isset($_REQUEST['action'])) {
         $image_url = null;
 
         if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
-            $target_dir = "../uploads/";
+            $target_dir = "../uploads/menu/";
             if (!is_dir($target_dir)) mkdir($target_dir, 0755, true);
 
             $file_extension = strtolower(pathinfo($_FILES["image"]["name"], PATHINFO_EXTENSION));
@@ -46,7 +46,7 @@ if (isset($_REQUEST['action'])) {
                     echo json_encode(['success' => false, 'message' => 'Gagal mengupload gambar.']);
                     exit();
                 }
-                $image_url = "uploads/" . $new_filename;
+                $image_url = "uploads/menu/" . $new_filename;
             } else {
                 echo json_encode(['success' => false, 'message' => 'Tipe file gambar tidak valid (hanya jpg, png, gif, webp).']);
                 exit();
@@ -92,7 +92,7 @@ if (isset($_REQUEST['action'])) {
         $new_image_url = $old_image_url;
 
         if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
-            $target_dir = "../uploads/";
+            $target_dir = "../uploads/menu/";
             if (!is_dir($target_dir)) mkdir($target_dir, 0755, true);
             $file_extension = strtolower(pathinfo($_FILES["image"]["name"], PATHINFO_EXTENSION));
             $new_filename = uniqid('menu_', true) . '.' . $file_extension;
@@ -101,10 +101,10 @@ if (isset($_REQUEST['action'])) {
 
             if (in_array($file_extension, $allowed_types)) {
                 if (move_uploaded_file($_FILES["image"]["tmp_name"], $target_file)) {
-                    if (!empty($old_image_url) && strpos($old_image_url, 'uploads/') === 0 && file_exists("../" . $old_image_url)) {
+                    if (!empty($old_image_url) && strpos($old_image_url, 'uploads/menu/') === 0 && file_exists("../" . $old_image_url)) {
                         unlink("../" . $old_image_url);
                     }
-                    $new_image_url = "uploads/" . $new_filename;
+                    $new_image_url = "uploads/menu/" . $new_filename;
                 } else {
                     echo json_encode(['success' => false, 'message' => 'Gagal mengupload gambar baru.']);
                     exit();
@@ -170,7 +170,7 @@ if (isset($_REQUEST['action'])) {
         $stmt_delete = $conn->prepare("DELETE FROM menu WHERE id = ?");
         $stmt_delete->bind_param("i", $id);
         if ($stmt_delete->execute() && $stmt_delete->affected_rows > 0) {
-            if ($item && !empty($item['image_url']) && strpos($item['image_url'], 'uploads/') === 0 && file_exists("../" . $item['image_url'])) {
+            if ($item && !empty($item['image_url']) && strpos($item['image_url'], 'uploads/menu/') === 0 && file_exists("../" . $item['image_url'])) {
                 unlink("../" . $item['image_url']);
             }
             $response = ['success' => true, 'message' => "Menu '" . htmlspecialchars($item['name']) . "' berhasil dihapus."];
