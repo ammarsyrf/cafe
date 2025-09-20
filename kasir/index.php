@@ -3,7 +3,6 @@
 //  BAGIAN KONFIGURASI DAN INISIALISASI
 // =========================================================================
 
-// [PERBAIKAN 1: MENGATASI LOGOUT OTOMATIS]
 // Menaikkan batas waktu sesi menjadi 8 jam (28800 detik).
 ini_set('session.gc_maxlifetime', 28800);
 
@@ -55,8 +54,7 @@ if (isset($_GET['ajax'])) {
         $stmt_order->execute();
         $order_data = $stmt_order->get_result()->fetch_assoc();
 
-        // [PERBAIKAN] Mengambil `price_per_item` (bukan `price`) dan `selected_addons`
-        $sql_items = "SELECT m.name, oi.quantity, oi.price_per_item AS price, oi.selected_addons 
+        $sql_items = "SELECT m.name, oi.quantity, oi.price_per_item AS price, oi.total_price, oi.selected_addons 
                       FROM order_items oi 
                       JOIN menu m ON oi.menu_id = m.id 
                       WHERE oi.order_id = ?";
@@ -67,27 +65,37 @@ if (isset($_GET['ajax'])) {
         $items = [];
         while ($row = $result_items->fetch_assoc()) {
             $row['price'] = (float)$row['price'];
+            $row['total_price'] = (float)$row['total_price'];
             $row['quantity'] = (int)$row['quantity'];
-            // [PENAMBAHAN] Mengirimkan data addons ke frontend
-            $row['selected_addons'] = $row['selected_addons'];
             $items[] = $row;
         }
 
         $response_data = [
             'items' => $items,
-            'subtotal' => (float)$order_data['subtotal'],
-            'discount' => (float)$order_data['discount_amount'],
-            'tax' => (float)$order_data['tax'],
-            'total_amount' => (float)$order_data['total_amount'],
-            'table_number' => $order_data['table_number'],
-            'order_type' => $order_data['order_type']
+            'subtotal' => (float)($order_data['subtotal'] ?? 0),
+            'discount' => (float)($order_data['discount_amount'] ?? 0),
+            'tax' => (float)($order_data['tax'] ?? 0),
+            'total_amount' => (float)($order_data['total_amount'] ?? 0),
+            'table_number' => $order_data['table_number'] ?? null,
+            'order_type' => $order_data['order_type'] ?? 'dine-in'
         ];
         $response = ['success' => true, 'data' => $response_data];
     }
 
-    // [PENAMBAHAN: Endpoint untuk REAL-TIME UPDATE]
+    // Endpoint untuk REAL-TIME UPDATE
     if ($_GET['action'] === 'get_latest_orders') {
-        $base_select = "SELECT o.*, t.table_number, u.name AS member_name, c.name AS cashier_processor_name FROM orders o LEFT JOIN tables t ON o.table_id = t.id LEFT JOIN members u ON o.member_id = u.id LEFT JOIN users c ON o.cashier_id = c.id";
+        // [PERBAIKAN] Query untuk mengambil nama final dan status member.
+        // - Mengganti JOIN ke tabel members dari `o.user_id` menjadi `o.member_id`.
+        // - Mengganti alias tabel members dari `u` menjadi `m` agar lebih jelas.
+        // - Kondisi `is_member` sekarang didasarkan pada `o.member_id IS NOT NULL`, yang merupakan cara yang benar.
+        $base_select = "SELECT o.*, t.table_number, 
+                               COALESCE(m.name, o.customer_name, 'Guest') AS final_customer_name,
+                               (o.member_id IS NOT NULL) AS is_member,
+                               c.name AS cashier_processor_name 
+                        FROM orders o 
+                        LEFT JOIN tables t ON o.table_id = t.id 
+                        LEFT JOIN members m ON o.member_id = m.id 
+                        LEFT JOIN users c ON o.cashier_id = c.id";
 
         // 1. Pending Orders (Tunai)
         $pending_html = '';
@@ -102,11 +110,14 @@ if (isset($_GET['ajax'])) {
                         <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                         <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                     </div>
-                    <?php if (!empty($order['customer_name'])) : ?>
-                        <p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p>
-                    <?php elseif (!empty($order['member_name'])) : ?>
-                        <p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p>
-                    <?php endif; ?>
+
+                    <p class="text-sm text-gray-600 mb-2 flex items-center">
+                        Pemesan:
+                        <span class="font-semibold ml-1 <?= $order['is_member'] ? 'text-green-700' : '' ?>"><?= htmlspecialchars($order['final_customer_name']) ?></span>
+                        <?php if ($order['is_member']) : ?>
+                            <span class="ml-2 text-xs font-semibold bg-green-100 text-green-800 px-2 py-0.5 rounded-full">MEMBER</span>
+                        <?php endif; ?>
+                    </p>
 
                     <p class="text-sm text-gray-600 mb-2">Tipe:
                         <span class="font-semibold">
@@ -148,7 +159,13 @@ if (isset($_GET['ajax'])) {
                         <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                         <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                     </div>
-                    <?php if (!empty($order['customer_name'])): ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])): ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
+                    <p class="text-sm text-gray-600 mb-2 flex items-center">
+                        Pemesan:
+                        <span class="font-semibold ml-1 <?= $order['is_member'] ? 'text-green-700' : '' ?>"><?= htmlspecialchars($order['final_customer_name']) ?></span>
+                        <?php if ($order['is_member']) : ?>
+                            <span class="ml-2 text-xs font-semibold bg-green-100 text-green-800 px-2 py-0.5 rounded-full">MEMBER</span>
+                        <?php endif; ?>
+                    </p>
 
                     <p class="text-sm text-gray-600 mb-2">Tipe:
                         <span class="font-semibold">
@@ -285,10 +302,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =========================================================================
 //  LOGIC BAGIAN C: Mengambil data untuk Tampilan Halaman
 // =========================================================================
-$base_select = "SELECT o.*, t.table_number, u.name AS member_name, c.name AS cashier_processor_name
+// [PERBAIKAN] Query untuk mengambil nama final dan status member.
+// - Mengganti JOIN ke tabel members dari `o.user_id` menjadi `o.member_id`.
+// - Mengganti alias tabel members dari `u` menjadi `m` agar lebih jelas.
+// - Kondisi `is_member` sekarang didasarkan pada `o.member_id IS NOT NULL`, yang merupakan cara yang benar.
+$base_select = "SELECT o.*, t.table_number, 
+                       COALESCE(m.name, o.customer_name, 'Guest') AS final_customer_name,
+                       (o.member_id IS NOT NULL) AS is_member,
+                       c.name AS cashier_processor_name
                 FROM orders o 
                 LEFT JOIN tables t ON o.table_id = t.id 
-                LEFT JOIN members u ON o.member_id = u.id
+                LEFT JOIN members m ON o.member_id = m.id
                 LEFT JOIN users c ON o.cashier_id = c.id";
 
 // 1. Pesanan menunggu pembayaran tunai
@@ -416,7 +440,13 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                                 <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                                 <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                             </div>
-                            <?php if (!empty($order['customer_name'])) : ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])) : ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
+                            <p class="text-sm text-gray-600 mb-2 flex items-center">
+                                Pemesan:
+                                <span class="font-semibold ml-1 <?= $order['is_member'] ? 'text-green-700' : '' ?>"><?= htmlspecialchars($order['final_customer_name']) ?></span>
+                                <?php if ($order['is_member']) : ?>
+                                    <span class="ml-2 text-xs font-semibold bg-green-100 text-green-800 px-2 py-0.5 rounded-full">MEMBER</span>
+                                <?php endif; ?>
+                            </p>
                             <p class="text-sm text-gray-600 mb-2">Tipe: <span class="font-semibold"><?= ($order['order_type'] === 'take-away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></span></p>
                             <p class="text-sm text-gray-600 mb-4">Total: <span class="font-bold text-lg text-gray-800">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                             <form method="POST" action="index.php">
@@ -449,7 +479,13 @@ if ($result_archived) while ($row = $result_archived->fetch_assoc()) $archived_o
                                 <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
                                 <span class="text-sm text-gray-500"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></span>
                             </div>
-                            <?php if (!empty($order['customer_name'])) : ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])) : ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
+                            <p class="text-sm text-gray-600 mb-2 flex items-center">
+                                Pemesan:
+                                <span class="font-semibold ml-1 <?= $order['is_member'] ? 'text-green-700' : '' ?>"><?= htmlspecialchars($order['final_customer_name']) ?></span>
+                                <?php if ($order['is_member']) : ?>
+                                    <span class="ml-2 text-xs font-semibold bg-green-100 text-green-800 px-2 py-0.5 rounded-full">MEMBER</span>
+                                <?php endif; ?>
+                            </p>
                             <p class="text-sm text-gray-600 mb-2">Tipe: <span class="font-semibold"><?= ($order['order_type'] === 'take-away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></span></p>
                             <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
                             <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
@@ -519,7 +555,13 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
             <h3 class="font-bold text-lg text-gray-800">Order #<?= $order['id'] ?></h3>
             <span class="text-sm text-gray-500"><?= $is_archived ? 'Dicetak pada: ' . date('d M Y, H:i', strtotime($order['receipt_printed_at'])) : 'Dibayar pada: ' . date('d M Y, H:i', strtotime($order['updated_at'])) ?></span>
         </div>
-        <?php if (!empty($order['customer_name'])) : ?><p class="text-sm text-gray-600 mb-2">Nama Pemesan: <span class="font-semibold"><?= htmlspecialchars($order['customer_name']) ?></span></p><?php elseif (!empty($order['member_name'])) : ?><p class="text-sm text-gray-600 mb-2">Member: <span class="font-semibold text-green-700"><?= htmlspecialchars($order['member_name']) ?></span></p><?php endif; ?>
+        <p class="text-sm text-gray-600 mb-2 flex items-center">
+            Pemesan:
+            <span class="font-semibold ml-1 <?= $order['is_member'] ? 'text-green-700' : '' ?>"><?= htmlspecialchars($order['final_customer_name']) ?></span>
+            <?php if ($order['is_member']) : ?>
+                <span class="ml-2 text-xs font-semibold bg-green-100 text-green-800 px-2 py-0.5 rounded-full">MEMBER</span>
+            <?php endif; ?>
+        </p>
         <p class="text-sm text-gray-600 mb-2">Tipe: <span class="font-semibold"><?= ($order['order_type'] === 'take-away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></span></p>
         <p class="text-sm text-gray-500 mb-2">Total: <span class="font-bold text-gray-700">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></span></p>
         <p class="text-sm text-gray-500 mb-4">Pembayaran: <span class="font-bold text-gray-700 capitalize"><?= str_replace('_', ' ', $order['payment_method']) ?></span></p>
@@ -531,7 +573,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
                     <p style="margin: 0; font-size: 10px;"><?= htmlspecialchars($cafe_settings['address']) ?></p>
                     <p style="margin: 0; font-size: 10px;">Telp: <?= htmlspecialchars($cafe_settings['phone']) ?></p>
                 </div>
-                <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
+                <div style="margin: 8px 0; border-top: 1px solid black;"></div>
                 <table style="width: 100%; font-size: 10px;">
                     <tr>
                         <td>No. Struk</td>
@@ -545,82 +587,71 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
                         <td>Tanggal</td>
                         <td style="text-align: right;"><?= date('d/m/y H:i', strtotime($order['updated_at'])) ?></td>
                     </tr>
-                    <?php if (!empty($order['customer_name'])): ?><tr>
-                            <td>Pemesan</td>
-                            <td style="text-align: right;"><?= htmlspecialchars($order['customer_name']) ?></td>
-                        </tr><?php elseif (!empty($order['member_name'])): ?><tr>
+                    <?php if ($order['is_member']) : ?>
+                        <tr>
                             <td>Member</td>
-                            <td style="text-align: right;"><?= htmlspecialchars($order['member_name']) ?></td>
-                        </tr><?php endif; ?>
+                            <td style="text-align: right;"><?= htmlspecialchars($order['final_customer_name']) ?></td>
+                        </tr>
+                    <?php else : ?>
+                        <tr>
+                            <td>Pemesan</td>
+                            <td style="text-align: right;"><?= htmlspecialchars($order['final_customer_name']) ?></td>
+                        </tr>
+                    <?php endif; ?>
                     <tr>
                         <td>Tipe</td>
                         <td style="text-align: right;"><?= ($order['order_type'] === 'take-away') ? 'Take Away' : 'Dine-In (Meja ' . htmlspecialchars($order['table_number']) . ')' ?></td>
                     </tr>
                 </table>
-                <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
+                <div style="margin: 8px 0; border-top: 1px solid black;"></div>
                 <table style="width: 100%; font-size: 11px;">
                     <?php
-                    // [PERBAIKAN] Mengambil `price_per_item` dan `selected_addons` untuk struk
-                    $items_sql_print = "SELECT oi.quantity, m.name, oi.price_per_item AS price, oi.selected_addons FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
+                    $items_sql_print = "SELECT oi.quantity, m.name, oi.price_per_item AS price, oi.total_price, oi.selected_addons FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
                     $items_stmt_print = $conn->prepare($items_sql_print);
                     $items_stmt_print->bind_param("i", $order['id']);
                     $items_stmt_print->execute();
                     $items_result_print = $items_stmt_print->get_result();
                     while ($item = $items_result_print->fetch_assoc()) :
-                        // [PERBAIKAN STRUK] Menghitung total harga per item termasuk addon
-                        $price_per_unit = (float)$item['price'];
-                        $total_addon_price = 0;
-                        $parsed_addons = []; // Array untuk menyimpan detail addon
-
-                        if (!empty($item['selected_addons'])) {
-                            $addons = json_decode($item['selected_addons'], true);
-                            if (is_array($addons)) {
-                                foreach ($addons as $addon) {
-                                    $addon_name = $addon['option_name'] ?? $addon['name'] ?? '[Nama Hilang]';
-                                    $addon_price = isset($addon['price']) ? (float)$addon['price'] : 0;
-                                    $total_addon_price += $addon_price;
-                                    // Simpan detail addon untuk ditampilkan
-                                    $parsed_addons[] = [
-                                        'name' => htmlspecialchars($addon_name),
-                                        'price' => $addon_price
-                                    ];
-                                }
-                            }
-                        }
-
-                        $price_per_unit_with_addons = $price_per_unit + $total_addon_price;
-                        $line_total = $price_per_unit_with_addons * (int)$item['quantity'];
+                        $base_price = (float)$item['price'];
+                        $qty = (int)$item['quantity'];
+                        $base_item_total = $base_price * $qty;
                     ?>
                         <tr>
-                            <td colspan="2">
-                                <!-- Tampilkan nama menu utama dan harga dasarnya -->
-                                <?= htmlspecialchars($item['name']) ?> (<?= number_format($price_per_unit, 0, ',', '.') ?>)
-
-                                <!-- Loop melalui addon yang sudah diparsing untuk ditampilkan -->
-                                <?php if (!empty($parsed_addons)): ?>
-                                    <?php foreach ($parsed_addons as $addon_detail): ?>
-                                        <div style="font-size: 10px; padding-left: 10px;">
-                                            <!-- Tampilkan nama addon dan harganya jika > 0 -->
-                                            + <?= $addon_detail['name'] ?>
-                                            <?php if ($addon_detail['price'] > 0): ?>
-                                                (<?= number_format($addon_detail['price'], 0, ',', '.') ?>)
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
+                            <td colspan="4" style="padding-top: 5px; font-weight: bold;"><?= htmlspecialchars($item['name']) ?></td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="padding-left: 10px;"><?= $qty ?> x <?= number_format($base_price, 0, ',', '.') ?></td>
+                            <td colspan="2" style="text-align: right;"><?= number_format($base_item_total, 0, ',', '.') ?></td>
+                        </tr>
+                        <?php
+                        $addons = json_decode($item['selected_addons'], true);
+                        if (is_array($addons) && !empty($addons)) {
+                            foreach ($addons as $addon) {
+                                $addon_price = (float)($addon['price'] ?? 0);
+                                $addon_total = $addon_price * $qty;
+                        ?>
+                                <tr>
+                                    <td colspan="3" style="padding-left: 15px; font-size: 10px;">+ <?= htmlspecialchars($addon['option_name'] ?? 'Addon') ?></td>
+                                    <td style="text-align: right; font-size: 10px;"><?= $addon_price > 0 ? number_format($addon_total, 0, ',', '.') : '' ?></td>
+                                </tr>
+                        <?php
+                            }
+                        }
+                        ?>
+                        <!-- Total Item -->
+                        <tr>
+                            <td colspan="4" style="padding: 2px 0;">
+                                <div style="border-top: 1px dashed #000;"></div>
                             </td>
                         </tr>
                         <tr>
-                            <td style="padding-left: 10px;">
-                                <?= $item['quantity'] ?> x <?= number_format($price_per_unit_with_addons, 0, ',', '.') ?>
-                            </td>
-                            <td style="text-align: right;">
-                                <?= number_format($line_total, 0, ',', '.') ?>
-                            </td>
+                            <td colspan="2" style="padding-left: 10px; font-size: 10px; font-weight: bold;">Total Item</td>
+                            <td colspan="2" style="text-align: right; font-size: 10px; font-weight: bold;"><?= number_format($item['total_price'], 0, ',', '.') ?></td>
                         </tr>
+
                     <?php endwhile; ?>
                 </table>
-                <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
+                <div style="margin: 8px 0; border-top: 1px solid black;"></div>
                 <table style="width: 100%; font-size: 11px;">
                     <tr>
                         <td>Subtotal</td>
@@ -635,10 +666,10 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
                         <td style="text-align: right;">Rp <?= number_format($order['tax'], 0, ',', '.') ?></td>
                     </tr>
                 </table>
-                <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
+                <div style="margin: 8px 0; border-top: 1px solid black;"></div>
                 <table style="width: 100%; font-size: 11px;">
                     <tr style="font-weight: bold; font-size: 12px;">
-                        <td>TOTAL</td>
+                        <td>Total Bayar</td>
                         <td style="text-align: right;">Rp <?= number_format($order['total_amount'], 0, ',', '.') ?></td>
                     </tr>
                     <?php if ($transaction_details) : ?>
@@ -652,7 +683,7 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
                         </tr>
                     <?php endif; ?>
                 </table>
-                <div style="margin: 8px 0; border-top: 1px dashed black;"></div>
+                <div style="margin: 8px 0; border-top: 1px solid black;"></div>
                 <p style="text-align: center; font-size: 10px; margin: 10px 0;">Terima kasih atas kunjungan Anda!</p>
             </div>
         </div>
@@ -705,10 +736,10 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
                     let value = e.target.value.replace(/\D/g, '');
                     const amountGiven = parseFloat(value) || 0;
                     const change = amountGiven - totalAmount;
-                    changeAmountEl.textContent = `Rp ${change >= 0 ? formatRupiah(change) : '0'}`;
+                    changeAmountEl.textContent = `Rp ${change >= 0 ? formatRupiah(change, false) : '0'}`;
                     changeAmountEl.classList.toggle('text-red-600', change < 0);
                     changeAmountEl.classList.toggle('text-green-600', change >= 0);
-                    e.target.value = value ? formatRupiah(value) : '';
+                    e.target.value = value ? formatRupiah(value, false) : '';
                 };
                 input.addEventListener('input', inputHandler);
                 input.setAttribute('data-listener-attached', 'true');
@@ -749,9 +780,6 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
             }
         });
 
-        // =================================================================================
-        //  [PERBAIKAN UTAMA] FUNGSI UNTUK MENAMPILKAN DETAIL PESANAN DENGAN HARGA TERPISAH
-        // =================================================================================
         function populateInlineDetails(container, data) {
             const {
                 items,
@@ -761,66 +789,55 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
                 total_amount
             } = data;
 
-            let tableHTML = `<table class="min-w-full text-sm"><thead class="bg-gray-100"><tr><th class="p-2 text-left font-semibold text-gray-600">Item</th><th class="p-2 text-center font-semibold text-gray-600">Jml</th><th class="p-2 text-right font-semibold text-gray-600">Subtotal</th></tr></thead><tbody class="divide-y">`;
-
-            items.forEach(item => {
-                let itemSubtotal = item.price * item.quantity;
-                let totalAddonPrice = 0;
-
-                // Membangun tampilan untuk sel pertama (detail item)
-                let itemDetailsHTML = `
-                    <div>${item.name}</div>
-                    <div class="text-xs text-gray-500">${item.quantity} x ${formatRupiah(item.price)}</div>
-                `;
-
-                if (item.selected_addons) {
-                    try {
-                        const addons = JSON.parse(item.selected_addons);
-                        if (Array.isArray(addons) && addons.length > 0) {
-                            addons.forEach(addon => {
-                                // PERBAIKAN: Menggunakan 'option_name' sesuai struktur DB
-                                let addonName = addon.option_name || addon.name || '[Nama Addon Hilang]';
-                                let addonPrice = parseFloat(addon.price) || 0;
-
-                                totalAddonPrice += addonPrice * item.quantity;
-
-                                // Tambahkan detail addon ke HTML sel pertama
-                                if (addonPrice > 0) {
-                                    itemDetailsHTML += `
-                                        <div class="pl-4 text-sm text-gray-600">+ ${addonName}</div>
-                                        <div class="pl-4 text-xs text-gray-500">${item.quantity} x ${formatRupiah(addonPrice)}</div>
-                                    `;
-                                } else {
-                                    itemDetailsHTML += `<div class="pl-4 text-sm text-gray-600">+ ${addonName}</div>`;
-                                }
-                            });
-                        }
-                    } catch (e) {
-                        console.error('Error parsing addons JSON:', e);
-                        itemDetailsHTML += '<div class="text-xs text-red-500 pl-4">Error data addon</div>';
+            let itemsHtml = items.map(item => {
+                let baseItemTotal = item.quantity * item.price;
+                let addonsHtml = '';
+                try {
+                    const addons = JSON.parse(item.selected_addons);
+                    if (Array.isArray(addons) && addons.length > 0) {
+                        addonsHtml = addons.map(addon => {
+                            const addonPrice = parseFloat(addon.price || 0);
+                            const addonTotal = item.quantity * addonPrice;
+                            return `
+                            <div class="flex justify-between pl-4 text-gray-600 text-xs">
+                                <span>+ ${addon.option_name}</span>
+                                <span>${formatRupiah(addonTotal)}</span>
+                            </div>`;
+                        }).join('');
                     }
-                }
+                } catch (e) {}
 
-                const finalItemSubtotal = itemSubtotal + totalAddonPrice;
-
-                tableHTML += `
-                    <tr>
-                        <td class="p-2 align-top">${itemDetailsHTML}</td>
-                        <td class="p-2 text-center align-top">${item.quantity}</td>
-                        <td class="p-2 text-right align-top">${formatRupiah(finalItemSubtotal)}</td>
-                    </tr>
+                return `
+                <div class="py-2 border-b last:border-b-0">
+                    <div class="space-y-1">
+                        <div class="flex justify-between">
+                            <span class="font-semibold">${item.quantity}x ${item.name}</span>
+                            <span>${formatRupiah(baseItemTotal)}</span>
+                        </div>
+                        ${addonsHtml}
+                    </div>
+                    <div class="flex justify-between items-center font-bold text-gray-800 border-t border-dashed mt-2 pt-1">
+                        <span>Total Item</span>
+                        <span>${formatRupiah(item.total_price)}</span>
+                    </div>
+                </div>
                 `;
-            });
+            }).join('');
 
-            tableHTML += `</tbody></table>`;
-            tableHTML += `
-            <div class="mt-2 pt-2 border-t text-sm">
-                <div class="flex justify-between py-1"><span>Subtotal</span><span>Rp ${formatRupiah(subtotal)}</span></div>
-                ${discount > 0 ? `<div class="flex justify-between py-1 text-green-600"><span>Diskon</span><span>- Rp ${formatRupiah(discount)}</span></div>` : ''}
-                <div class="flex justify-between py-1"><span>PPN (11%)</span><span>Rp ${formatRupiah(tax)}</span></div>
-                <div class="flex justify-between font-bold text-base mt-1 py-1 border-t border-gray-300"><span>Total Bayar</span><span>Rp ${formatRupiah(total_amount)}</span></div>
-            </div>`;
-            container.innerHTML = tableHTML;
+            container.innerHTML = `
+                <h3 class="font-bold mb-2 text-gray-700 text-base">Rincian Item</h3>
+                <div class="space-y-1 mb-4">${itemsHtml}</div>
+                <hr class="my-3 border-gray-200">
+                <div class="space-y-1 text-right text-gray-800 text-sm">
+                    <div class="flex justify-between"><span>Subtotal</span><span>${formatRupiah(subtotal)}</span></div>
+                    <div class="flex justify-between"><span>Diskon</span><span>- ${formatRupiah(discount)}</span></div>
+                    <div class="flex justify-between"><span>PPN (11%)</span><span>${formatRupiah(tax)}</span></div>
+                    <div class="flex justify-between font-bold text-base border-t pt-2 mt-2">
+                        <span>Total Bayar</span>
+                        <span>${formatRupiah(total_amount)}</span>
+                    </div>
+                </div>
+            `;
         }
 
 
@@ -907,8 +924,16 @@ function generate_order_card($order, $cashier_name, $conn, $is_archived, $cafe_s
         };
     }
 
-    // --- FUNGSI FORMAT RUPIAH ---
-    function formatRupiah(angka) {
-        return new Intl.NumberFormat('id-ID').format(Number(String(angka).replace(/\D/g, '')) || 0);
+    // FUNGSI FORMAT RUPIAH
+    function formatRupiah(angka, useCurrency = true) {
+        const options = {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+        };
+        if (useCurrency) {
+            options.style = 'currency';
+            options.currency = 'IDR';
+        }
+        return new Intl.NumberFormat('id-ID', options).format(Number(String(angka).replace(/\D/g, '')) || 0);
     }
 </script>

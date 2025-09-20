@@ -36,30 +36,29 @@ $end_date = $_GET['end_date'] ?? date('Y-m-d');
 // Ambil data transaksi berdasarkan rentang tanggal
 $transactions = [];
 
-/*
- * ==================================================================
- * PEMBARUAN QUERY SQL UNTUK DETAIL PESANAN
- * ==================================================================
- * - [DIPERBAIKI] Mengubah join dari tabel 'users' ke 'members' untuk mendapatkan nama member yang benar.
- * - Menggunakan 'o.user_id' sebagai kunci untuk join ke 'members.id'.
- * - Logika COALESCE dipertahankan untuk menangani guest dan fallback.
- */
+// [PERBAIKAN] Query untuk mengambil data member dengan benar.
+// - Mengganti JOIN ke tabel members dari `o.user_id` menjadi `o.member_id`.
+// - Kondisi `is_member` sekarang didasarkan pada `o.member_id IS NOT NULL`.
 $sql = "SELECT 
             o.id as transaction_id, 
             o.created_at as transaction_date, 
             o.payment_method,
             o.discount_amount as member_discount,
             COALESCE(NULLIF(TRIM(mem.name), ''), NULLIF(TRIM(o.customer_name), ''), 'Guest') as customer_name_display,
-            (o.user_id IS NOT NULL) as is_member,
+            (o.member_id IS NOT NULL) as is_member,
             cashier.name as cashier_name,
             o.total_amount as total_paid,
             o.status as order_status,
+            o.subtotal as order_subtotal,
+            o.tax as order_tax,
             oi.quantity,
             m.name as menu_name,
-            oi.price_per_item as item_price
+            oi.price_per_item as item_price,
+            oi.total_price as item_total_price,
+            oi.selected_addons
         FROM orders o
         LEFT JOIN users cashier ON o.cashier_id = cashier.id
-        LEFT JOIN members mem ON o.user_id = mem.id
+        LEFT JOIN members mem ON o.member_id = mem.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN menu m ON oi.menu_id = m.id
         WHERE DATE(o.created_at) BETWEEN ? AND ?
@@ -84,6 +83,8 @@ if ($stmt = $conn->prepare($sql)) {
                     'cashier_name' => $row['cashier_name'],
                     'total_paid' => $row['total_paid'],
                     'order_status' => $row['order_status'],
+                    'order_subtotal' => $row['order_subtotal'],
+                    'order_tax' => $row['order_tax'],
                     'items' => []
                 ];
             }
@@ -91,7 +92,9 @@ if ($stmt = $conn->prepare($sql)) {
                 $grouped_transactions[$transaction_id]['items'][] = [
                     'quantity' => $row['quantity'],
                     'menu_name' => $row['menu_name'],
-                    'item_price' => $row['item_price']
+                    'item_price' => $row['item_price'],
+                    'item_total_price' => $row['item_total_price'],
+                    'selected_addons' => $row['selected_addons']
                 ];
             }
         }
@@ -162,28 +165,6 @@ $jumlah_transaksi = count($grouped_transactions);
         </div>
     </div>
 
-    <!-- Daftar Semua Kasir -->
-    <div class="mb-8">
-        <div class="bg-white p-6 rounded-xl shadow-lg">
-            <h2 class="text-xl font-bold text-gray-800 mb-4">Daftar Kasir Terdaftar</h2>
-            <?php if (!empty($cashiers)) : ?>
-                <div class="flex flex-wrap gap-x-6 gap-y-3">
-                    <?php foreach ($cashiers as $cashierName) : ?>
-                        <span class="bg-gray-200 text-gray-800 text-sm font-medium px-4 py-2 rounded-full flex items-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-circle mr-2" viewBox="0 0 16 16">
-                                <path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
-                                <path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z" />
-                            </svg>
-                            <?= htmlspecialchars($cashierName) ?>
-                        </span>
-                    <?php endforeach; ?>
-                </div>
-            <?php else : ?>
-                <p class="text-gray-500">Tidak ada data kasir yang ditemukan.</p>
-            <?php endif; ?>
-        </div>
-    </div>
-
     <!-- Tabel Transaksi -->
     <div class="bg-white rounded-xl shadow-lg">
         <div class="p-4 border-b">
@@ -209,11 +190,7 @@ $jumlah_transaksi = count($grouped_transactions);
                     <?php if (!empty($grouped_transactions)) : ?>
                         <?php foreach ($grouped_transactions as $tx_id => $tx) : ?>
                             <!-- Baris Utama (Bisa Diklik) -->
-                            <tr class="transaction-row cursor-pointer"
-                                onclick="toggleDetails(this)"
-                                data-id="#<?= $tx['transaction_id'] ?>"
-                                data-name="<?= strtolower(htmlspecialchars($tx['customer_name'] ?? 'guest')) ?>"
-                                data-cashier="<?= strtolower(htmlspecialchars($tx['cashier_name'] ?? '')) ?>">
+                            <tr class="transaction-row cursor-pointer" onclick="toggleDetails(this)" data-id="#<?= $tx['transaction_id'] ?>" data-name="<?= strtolower(htmlspecialchars($tx['customer_name'] ?? 'guest')) ?>" data-cashier="<?= strtolower(htmlspecialchars($tx['cashier_name'] ?? '')) ?>">
                                 <td class="px-5 py-4 border-b border-gray-200 text-sm">
                                     #<?= $tx['transaction_id'] ?>
                                 </td>
@@ -284,32 +261,47 @@ $jumlah_transaksi = count($grouped_transactions);
                                     <div class="max-w-md">
                                         <h4 class="text-md font-bold text-gray-700 mb-2">Detail Pesanan:</h4>
                                         <?php if (!empty($tx['items'])) : ?>
-                                            <?php $subtotal = 0; ?>
-                                            <ul class="space-y-1 text-sm text-gray-600">
+                                            <div class="space-y-1 text-sm mb-4">
                                                 <?php foreach ($tx['items'] as $item) : ?>
-                                                    <?php $subtotal += $item['quantity'] * $item['item_price']; ?>
-                                                    <li class="flex justify-between">
-                                                        <span>
-                                                            <?= htmlspecialchars($item['quantity']) ?>x <?= htmlspecialchars($item['menu_name']) ?>
-                                                        </span>
-                                                        <span class="font-mono">
-                                                            @ Rp <?= number_format($item['item_price'], 0, ',', '.') ?>
-                                                        </span>
-                                                    </li>
+                                                    <div class="py-2 border-b last:border-b-0">
+                                                        <div class="space-y-1">
+                                                            <div class="flex justify-between">
+                                                                <span class="font-semibold"><?= htmlspecialchars($item['quantity']) ?>x <?= htmlspecialchars($item['menu_name']) ?></span>
+                                                                <span>Rp <?= number_format($item['quantity'] * $item['item_price'], 0, ',', '.') ?></span>
+                                                            </div>
+
+                                                            <?php
+                                                            $addons = json_decode($item['selected_addons'], true);
+                                                            if (is_array($addons) && !empty($addons)) {
+                                                                foreach ($addons as $addon) {
+                                                                    $addon_price = $addon['price'] ?? 0;
+                                                                    $addon_total = $item['quantity'] * $addon_price;
+                                                                    echo '<div class="flex justify-between pl-4 text-gray-600 text-xs">';
+                                                                    echo '<span>+ ' . htmlspecialchars($addon['option_name'] ?? 'Addon') . '</span>';
+                                                                    echo '<span>' . 'Rp ' . number_format($addon_total, 0, ',', '.') . '</span>';
+                                                                    echo '</div>';
+                                                                }
+                                                            }
+                                                            ?>
+                                                        </div>
+                                                        <div class="flex justify-between items-center font-bold text-gray-800 border-t border-dashed mt-2 pt-1">
+                                                            <span>Total Item</span>
+                                                            <span>Rp <?= number_format($item['item_total_price'], 0, ',', '.') ?></span>
+                                                        </div>
+                                                    </div>
                                                 <?php endforeach; ?>
-                                            </ul>
-                                            <hr class="my-2 border-gray-300">
-                                            <div class="text-sm text-gray-800 space-y-1">
-                                                <?php
-                                                $ppn = $subtotal * 0.11; // PPN 11%
-                                                ?>
+                                            </div>
+
+                                            <hr class="my-3 border-gray-200">
+
+                                            <div class="text-sm text-gray-800 space-y-1 text-right">
                                                 <div class="flex justify-between">
                                                     <span class="font-semibold">Subtotal:</span>
-                                                    <span class="font-mono">Rp <?= number_format($subtotal, 0, ',', '.') ?></span>
+                                                    <span class="font-mono">Rp <?= number_format($tx['order_subtotal'], 0, ',', '.') ?></span>
                                                 </div>
                                                 <div class="flex justify-between">
                                                     <span class="font-semibold">PPN (11%):</span>
-                                                    <span class="font-mono">Rp <?= number_format($ppn, 0, ',', '.') ?></span>
+                                                    <span class="font-mono">Rp <?= number_format($tx['order_tax'], 0, ',', '.') ?></span>
                                                 </div>
 
                                                 <?php if ($tx['is_member'] && $tx['member_discount'] > 0) : ?>
@@ -354,7 +346,6 @@ $jumlah_transaksi = count($grouped_transactions);
         const detailsRow = rowElement.nextElementSibling;
         const icon = rowElement.querySelector('.dropdown-icon');
 
-        // Tutup semua baris lain yang mungkin terbuka
         document.querySelectorAll('.transaction-row.is-open').forEach(openRow => {
             if (openRow !== rowElement) {
                 openRow.nextElementSibling.style.display = 'none';
@@ -364,13 +355,12 @@ $jumlah_transaksi = count($grouped_transactions);
             }
         });
 
-        // Buka atau tutup baris yang diklik
         if (detailsRow.style.display === 'none') {
-            detailsRow.style.display = ''; // Menampilkan baris detail
+            detailsRow.style.display = '';
             rowElement.classList.add('is-open');
             if (icon) icon.classList.add('rotate-180');
         } else {
-            detailsRow.style.display = 'none'; // Menyembunyikan baris detail
+            detailsRow.style.display = 'none';
             rowElement.classList.remove('is-open');
             if (icon) icon.classList.remove('rotate-180');
         }
@@ -380,29 +370,59 @@ $jumlah_transaksi = count($grouped_transactions);
     function printReceipt(transactionId) {
         const tx = transactionsData.find(t => t.transaction_id == transactionId);
         if (!tx) {
-            // Seharusnya tidak terjadi, tapi sebagai pengaman
             return;
         }
 
-        let subtotal = 0;
         let itemsHtml = tx.items.map(item => {
-            const numericPrice = parseFloat(item.item_price);
-            const numericQty = parseInt(item.quantity, 10);
-            const itemTotal = numericQty * numericPrice;
-            subtotal += itemTotal;
-            // Format baru: Nama item di satu baris, detail harga di baris bawahnya
+            const basePrice = parseFloat(item.item_price);
+            const qty = parseInt(item.quantity, 10);
+            const baseItemTotal = basePrice * qty;
+
+            let addonHtml = '';
+            try {
+                if (item.selected_addons && typeof item.selected_addons === 'string') {
+                    const addons = JSON.parse(item.selected_addons);
+                    if (Array.isArray(addons) && addons.length > 0) {
+                        addonHtml = addons.map(addon => {
+                            const addonPrice = parseFloat(addon.price || 0);
+                            const addonName = addon.option_name || 'Addon';
+                            const addonTotal = addonPrice * qty;
+                            return `
+                        <tr>
+                            <td colspan="3" style="padding-left: 15px; font-size: 11px;">+ ${addonName}</td>
+                            <td style="text-align: right; font-size: 11px;">${addonPrice > 0 ? number_format(addonTotal) : ''}</td>
+                        </tr>`;
+                        }).join('');
+                    }
+                }
+            } catch (e) {
+                console.error("Gagal mem-parsing JSON addons:", item.selected_addons);
+            }
+
+            // [BARU] Menambahkan Total per Item di struk
+            const itemTotalHtml = `
+                <tr>
+                    <td colspan="4" style="padding: 2px 0;"><div style="border-top: 1px dashed #000;"></div></td>
+                </tr>
+                <tr>
+                    <td colspan="2" style="padding-left: 15px; font-size: 11px; font-weight: bold;">Total Item</td>
+                    <td colspan="2" style="text-align: right; font-size: 11px; font-weight: bold;">${number_format(item.item_total_price)}</td>
+                </tr>`;
+
             return `
-            <tr>
-                <td colspan="4" style="padding-top: 5px;">${item.menu_name}</td>
-            </tr>
-            <tr>
-                <td colspan="2" style="padding-left: 15px;">${numericQty} x ${number_format(numericPrice)}</td>
-                <td colspan="2" style="text-align: right;">${number_format(itemTotal)}</td>
-            </tr>
-        `;
+                <tr>
+                    <td colspan="4" style="padding-top: 5px; font-weight: bold;">${item.menu_name}</td>
+                </tr>
+                <tr>
+                    <td colspan="2" style="padding-left: 15px;">${qty} x ${number_format(basePrice)}</td>
+                    <td colspan="2" style="text-align: right;">${number_format(baseItemTotal)}</td>
+                </tr>
+                ${addonHtml}
+                ${itemTotalHtml}
+            `;
         }).join('');
 
-        const ppn = Math.round(subtotal * 0.11);
+        const ppn = Math.round(tx.order_tax);
         const customerLabel = tx.is_member ? 'Member' : 'Pelanggan';
 
         const receiptContent = `
@@ -413,7 +433,7 @@ $jumlah_transaksi = count($grouped_transactions);
                     body { font-family: 'Courier New', monospace; font-size: 12px; margin: 0; padding: 10px; }
                     .container { width: 300px; margin: auto; }
                     h2, p { text-align: center; margin: 5px 0; }
-                    hr { border: none; border-top: 1px dashed #000; margin: 8px 0; }
+                    hr { border: none; border-top: 1px solid #000; margin: 8px 0; }
                     table { width: 100%; border-collapse: collapse; }
                     th, td { padding: 1px 0; }
                     .text-right { text-align: right; }
@@ -441,7 +461,7 @@ $jumlah_transaksi = count($grouped_transactions);
                         <tbody>
                             <tr>
                                 <td>Subtotal</td>
-                                <td class="text-right">Rp ${number_format(subtotal)}</td>
+                                <td class="text-right">Rp ${number_format(tx.order_subtotal)}</td>
                             </tr>
                             <tr>
                                 <td>PPN (11%)</td>

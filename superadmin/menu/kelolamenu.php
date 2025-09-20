@@ -338,6 +338,21 @@ if (isset($_REQUEST['action'])) {
             }
             break;
 
+        case 'update_addon_option': // FITUR BARU
+            $data = json_decode(file_get_contents('php://input'), true);
+            $id = intval($data['id'] ?? 0);
+            $name = trim($data['name'] ?? '');
+            $price = floatval($data['price'] ?? 0);
+            if (!empty($name) && $id > 0) {
+                $stmt = $conn->prepare("UPDATE addon_options SET name = ?, price = ? WHERE id = ?");
+                $stmt->bind_param("sdi", $name, $price, $id);
+                $response = $stmt->execute() ? ['success' => true, 'message' => 'Opsi berhasil diperbarui.'] : ['success' => false, 'message' => 'Gagal memperbarui opsi.'];
+                $stmt->close();
+            } else {
+                $response['message'] = 'Data tidak lengkap.';
+            }
+            break;
+
         case 'delete_addon_group':
             if (strtoupper($_SERVER['REQUEST_METHOD']) === 'DELETE' && isset($_GET['id'])) {
                 $id = intval($_GET['id']);
@@ -754,7 +769,7 @@ require_once '../includes/header.php';
                     showAjaxNotification(result.message, 'success');
                     setTimeout(() => {
                         window.location.reload();
-                    }, 500); // Jeda 1.5 detik agar notifikasi terbaca
+                    }, 500); // Jeda 0.5 detik agar notifikasi terbaca
                 } else {
                     showAjaxNotification(result.message || 'Terjadi kesalahan dari server.', 'error');
                     submitButton.disabled = false;
@@ -783,11 +798,38 @@ require_once '../includes/header.php';
                 renderAddons(allAddons);
             }
         };
-        const renderAddons = (addons) => {
+        const renderAddons = (addons) => { // FUNGSI DIMODIFIKASI
             addonListContainer.innerHTML = addons.length > 0 ? addons.map(group => `
             <div class="p-4 border rounded-lg bg-gray-50">
-                <div class="flex justify-between items-center mb-2"><h4 class="font-bold text-lg">${htmlspecialchars(group.name)}</h4><button class="delete-group-btn text-red-600 hover:text-red-800 font-bold" data-id="${group.id}">Hapus Grup</button></div>
-                <ul class="space-y-1 mb-3">${group.options.map(opt => `<li class="flex justify-between items-center text-sm p-1"><span>${htmlspecialchars(opt.name)}</span><span class="font-semibold">Rp ${Number(opt.price).toLocaleString('id-ID')}<button class="delete-option-btn text-red-500 hover:text-red-700 ml-2" data-id="${opt.id}">&times;</button></span></li>`).join('')}</ul>
+                <div class="flex justify-between items-center mb-2">
+                    <h4 class="font-bold text-lg">${htmlspecialchars(group.name)}</h4>
+                    <button class="delete-group-btn text-red-600 hover:text-red-800 font-bold" data-id="${group.id}">Hapus Grup</button>
+                </div>
+                <ul class="space-y-1 mb-3">
+                    ${group.options.map(opt => `
+                    <li class="addon-option-item flex justify-between items-center text-sm p-1" data-id="${opt.id}" data-name="${htmlspecialchars(opt.name)}" data-price="${opt.price}">
+                        <!-- Display Mode -->
+                        <div class="display-mode w-full flex justify-between items-center">
+                            <span>${htmlspecialchars(opt.name)}</span>
+                            <span class="font-semibold flex items-center gap-2">
+                                Rp ${Number(opt.price).toLocaleString('id-ID')}
+                                <div class="flex-shrink-0">
+                                    <button class="edit-option-btn text-xs py-1 px-2 rounded bg-yellow-500 hover:bg-yellow-600 text-white" data-id="${opt.id}">Edit</button>
+                                    <button class="delete-option-btn text-red-500 hover:text-red-700 ml-1 font-bold" data-id="${opt.id}">&times;</button>
+                                </div>
+                            </span>
+                        </div>
+                        <!-- Edit Mode (hidden by default) -->
+                        <div class="edit-mode hidden w-full flex items-center gap-2">
+                             <input type="text" class="edit-option-name-input w-full px-2 py-1 border rounded" value="${htmlspecialchars(opt.name)}">
+                             <input type="number" class="edit-option-price-input w-32 px-2 py-1 border rounded" value="${opt.price}" min="0">
+                             <div class="flex-shrink-0">
+                                 <button class="save-option-btn text-xs py-1 px-2 rounded bg-green-500 hover:bg-green-600 text-white" data-id="${opt.id}">Simpan</button>
+                                 <button class="cancel-edit-option-btn text-xs py-1 px-2 rounded bg-gray-400 hover:bg-gray-500 text-white ml-1">Batal</button>
+                             </div>
+                        </div>
+                    </li>`).join('')}
+                </ul>
                 <form class="add-option-form flex gap-2 text-sm">
                     <input type="hidden" name="group_id" value="${group.id}"><input type="text" name="name" class="w-full px-2 py-1 border rounded" placeholder="Nama Opsi Baru" required><input type="number" name="price" class="w-32 px-2 py-1 border rounded" placeholder="Harga" min="0" value="0" required><button type="submit" class="bg-green-500 text-white px-3 rounded text-xs">Tambah</button>
                 </form>
@@ -840,28 +882,68 @@ require_once '../includes/header.php';
                 }
             }
         });
-        addonListContainer.addEventListener('click', e => {
-            if (e.target.classList.contains('delete-group-btn')) {
-                showConfirmationModal('Hapus Grup?', 'Ini akan menghapus semua opsinya.', async () => {
-                    const response = await fetch(`?action=delete_addon_group&id=${e.target.dataset.id}`, {
+        addonListContainer.addEventListener('click', async e => { // LISTENER DIMODIFIKASI
+            const target = e.target;
+            const optionItem = target.closest('.addon-option-item');
+
+            const setOptionEditMode = (item, isEditing) => {
+                if (!item) return;
+                item.querySelector('.display-mode').classList.toggle('hidden', isEditing);
+                item.querySelector('.edit-mode').classList.toggle('hidden', !isEditing);
+            };
+
+            if (target.classList.contains('delete-group-btn')) {
+                showConfirmationModal('Hapus Grup?', 'Ini akan menghapus semua opsi di dalamnya.', async () => {
+                    const response = await fetch(`?action=delete_addon_group&id=${target.dataset.id}`, {
                         method: 'DELETE'
                     });
                     const result = await response.json();
                     showAjaxNotification(result.message, result.success ? 'success' : 'error');
                     if (result.success) fetchAddons();
                 });
-            }
-            if (e.target.classList.contains('delete-option-btn')) {
+            } else if (target.classList.contains('delete-option-btn')) {
                 showConfirmationModal('Hapus Opsi?', 'Yakin ingin menghapus opsi ini?', async () => {
-                    const response = await fetch(`?action=delete_addon_option&id=${e.target.dataset.id}`, {
+                    const response = await fetch(`?action=delete_addon_option&id=${target.dataset.id}`, {
                         method: 'DELETE'
                     });
                     const result = await response.json();
                     showAjaxNotification(result.message, result.success ? 'success' : 'error');
                     if (result.success) fetchAddons();
                 });
+            } else if (target.classList.contains('edit-option-btn')) {
+                if (optionItem) setOptionEditMode(optionItem, true);
+            } else if (target.classList.contains('cancel-edit-option-btn')) {
+                if (optionItem) {
+                    optionItem.querySelector('.edit-option-name-input').value = optionItem.dataset.name;
+                    optionItem.querySelector('.edit-option-price-input').value = optionItem.dataset.price;
+                    setOptionEditMode(optionItem, false);
+                }
+            } else if (target.classList.contains('save-option-btn')) {
+                if (optionItem) {
+                    const id = optionItem.dataset.id;
+                    const name = optionItem.querySelector('.edit-option-name-input').value.trim();
+                    const price = optionItem.querySelector('.edit-option-price-input').value;
+
+                    if (!name) return showAjaxNotification('Nama opsi tidak boleh kosong.', 'error');
+
+                    const response = await fetch('?action=update_addon_option', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            id,
+                            name,
+                            price
+                        })
+                    });
+                    const result = await response.json();
+                    showAjaxNotification(result.message, result.success ? 'success' : 'error');
+                    if (result.success) fetchAddons();
+                }
             }
         });
+
 
         const categoryModal = document.getElementById('categoryModal');
         const categoryListContainer = document.getElementById('categoryListContainer');

@@ -63,13 +63,14 @@ function get_cart_data($is_logged_in)
     $total = $subtotal_after_discount + $ppn;
     $cart_count = array_sum(array_column($cart, 'quantity'));
 
+    // [PERBAIKAN] Pembulatan nilai untuk menghindari desimal yang menyebabkan error di kasir
     return [
         'cart_items' => array_values($cart),
         'cart_count' => $cart_count,
-        'subtotal'   => $subtotal,
-        'discount'   => $discount,
-        'ppn'        => $ppn,
-        'total'      => $total,
+        'subtotal'   => round($subtotal),
+        'discount'   => round($discount),
+        'ppn'        => round($ppn),
+        'total'      => round($total),
     ];
 }
 
@@ -260,16 +261,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit();
     }
 
-    // Validasi nama untuk guest
+    // [PERBAIKAN ULANG] Logika yang benar untuk ID member dan nama pelanggan
     $customer_name = null;
-    if (!$is_logged_in) {
+    $member_id = null;
+    // user_id (untuk kasir) tidak di-set dari sisi pelanggan untuk menghindari error.
+    // Kolom ini akan diisi oleh sistem kasir saat transaksi diproses.
+    $user_id = null;
+
+    if ($is_logged_in) {
+        // Jika member login, isi member_id dan customer_name dari session.
+        $member_id = $_SESSION['member']['id'];
+        $customer_name = $_SESSION['member']['name'];
+    } else {
+        // Jika bukan member, ambil nama dari form.
         if (empty($_POST['customer_name'])) {
             header("Location: index.php?table=$table_id&error=Nama+pemesan+harus+diisi");
             exit();
         }
         $customer_name = trim($_POST['customer_name']);
     }
-
 
     $payment_method = $_POST['payment_method'];
     $cart_data = get_cart_data($is_logged_in);
@@ -279,16 +289,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $ppn = $cart_data['ppn'];
     $total = $cart_data['total'];
     $order_type = 'dine-in';
-    // [PERBAIKAN LOGIKA SESI] Ambil user_id dari dalam 'ruang' session 'member'
-    $user_id = $is_logged_in ? $_SESSION['member']['id'] : null;
-
 
     $conn->begin_transaction();
     try {
-        // Simpan pesanan
-        $sql = "INSERT INTO orders (table_id, user_id, customer_name, order_type, status, subtotal, discount_amount, tax, total_amount, payment_method) VALUES (?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, ?)";
+        // [PERBAIKAN ULANG] `user_id` tidak di-insert dari sini. Sistem kasir yang akan menanganinya.
+        // `member_id` diisi dengan benar jika pelanggan adalah member.
+        $sql = "INSERT INTO orders (table_id, member_id, customer_name, order_type, status, subtotal, discount_amount, tax, total_amount, payment_method) VALUES (?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, ?)";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iisssddds", $table_id, $user_id, $customer_name, $order_type, $subtotal, $discount, $ppn, $total, $payment_method);
+        // [PERBAIKAN ULANG] Sesuaikan tipe data dan variabel yang di-bind. `user_id` dihilangkan dari INSERT ini.
+        $stmt->bind_param("isssdddds", $table_id, $member_id, $customer_name, $order_type, $subtotal, $discount, $ppn, $total, $payment_method);
         $stmt->execute();
         $order_id = $stmt->insert_id;
 
@@ -301,35 +310,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         // Simpan item pesanan dan kurangi stok
         foreach ($_SESSION['cart'] as $item) {
-
-            // Definisikan variabel dengan tipe data yang benar
             $item_menu_id = (int)$item['id'];
             $item_quantity = (int)$item['quantity'];
             $item_original_price = (float)$item['original_price'];
             $item_total_price = (float)$item['price'] * $item_quantity;
-            $item_addons_json = null;
+            $item_addons_json = !empty($item['addons']) ? json_encode($item['addons']) : null;
 
-            if (!empty($item['addons'])) {
-                $item_addons_json = json_encode($item['addons']);
-                // Periksa apakah JSON valid, jika tidak, batalkan
-                if ($item_addons_json === false) {
-                    throw new Exception("Gagal meng-encode data add-on untuk menu ID: " . $item_menu_id);
-                }
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new Exception("Gagal meng-encode data add-on untuk menu ID: " . $item_menu_id);
             }
 
-            // Bind parameter ke statement yang sudah disiapkan
-            // [PERBAIKAN FINAL] Tipe data untuk parameter ke-4 (price_per_item) adalah 'd' (double)
-            // dan parameter ke-5 (selected_addons) adalah 's' (string).
-            $stmt_item->bind_param(
-                "iiidsd",
-                $order_id,
-                $item_menu_id,
-                $item_quantity,
-                $item_original_price, // price_per_item (double)
-                $item_addons_json,    // selected_addons (string)
-                $item_total_price     // total_price (double)
-            );
-
+            $stmt_item->bind_param("iiidsd", $order_id, $item_menu_id, $item_quantity, $item_original_price, $item_addons_json, $item_total_price);
 
             if (!$stmt_item->execute()) {
                 throw new Exception("Gagal menyimpan item pesanan (Menu ID: {$item_menu_id}) ke database: " . $stmt_item->error);
@@ -341,7 +332,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $stmt_update->bind_param("ii", $item_quantity, $item_menu_id);
             $stmt_update->execute();
         }
-        $stmt_item->close(); // Tutup statement setelah loop selesai
+        $stmt_item->close();
 
 
         $conn->commit();
