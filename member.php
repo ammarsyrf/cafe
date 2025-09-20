@@ -281,7 +281,7 @@ $conn->close();
                                                         foreach ($addons as $addon) {
                                                 ?>
                                                             <div class="flex justify-between items-center text-xs text-gray-500 pl-4">
-                                                                <span>+ <?= htmlspecialchars($addon['name'] ?? $addon['option'] ?? ''); ?></span>
+                                                                <span>+ <?= htmlspecialchars($addon['name'] ?? $addon['option_name'] ?? ''); ?></span>
                                                                 <span>Rp <?= number_format($addon['price'] ?? 0); ?></span>
                                                             </div>
                                                 <?php
