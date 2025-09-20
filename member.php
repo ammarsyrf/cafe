@@ -6,20 +6,26 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
-// [PERBAIKAN LOGIKA SESI] Cek apakah user sudah login dengan memeriksa 'ruang' session yang benar
+// Cek apakah user sudah login sebagai member
 if (!isset($_SESSION['member']) || $_SESSION['member']['role'] !== 'member') {
-    header('Location: login.php'); // Asumsi ada halaman login.php
+    header('Location: login.php');
     exit();
 }
 
 require_once 'db_connect.php';
 require_once 'config.php'; // Untuk BASE_URL
 
+// --- [PENAMBAHAN] AMBIL NAMA KAFE DARI PENGATURAN ---
+$cafe_name = 'Nama Cafe'; // Nama default
+$result_setting = $conn->query("SELECT setting_value FROM settings WHERE setting_name = 'cafe_name' LIMIT 1");
+if ($result_setting && $result_setting->num_rows > 0) {
+    $cafe_name = $result_setting->fetch_assoc()['setting_value'];
+}
+
 // Definisikan path untuk unggahan
 define('UPLOAD_DIR', __DIR__ . '/uploads/profiles/');
 define('UPLOAD_URL', BASE_URL . 'uploads/profiles/');
 
-// [PERBAIKAN LOGIKA SESI] Ambil ID dari 'ruang' session yang benar
 $member_id = $_SESSION['member']['id'];
 $error_message = '';
 $success_message = '';
@@ -31,13 +37,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     $phone = trim($_POST['phone_number']);
     $current_image_url = $_POST['current_image_url'];
 
-    // --- Fungsi untuk menangani unggahan file ---
     $profile_image_url = $current_image_url;
     if (isset($_FILES['profile_image']) && $_FILES['profile_image']['error'] == 0) {
         $file = $_FILES['profile_image'];
         $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
         if (in_array($file['type'], $allowed_types)) {
-            // Hapus gambar lama jika ada
             if ($current_image_url) {
                 $old_file_path = str_replace(UPLOAD_URL, UPLOAD_DIR, $current_image_url);
                 if (file_exists($old_file_path)) @unlink($old_file_path);
@@ -57,7 +61,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
         $stmt->bind_param("ssssi", $name, $email, $phone, $profile_image_url, $member_id);
         if ($stmt->execute()) {
             $success_message = "Profil berhasil diperbarui.";
-            // [PERBAIKAN LOGIKA SESI] Update nama di 'ruang' session yang benar
             $_SESSION['member']['name'] = $name;
         } else {
             $error_message = "Gagal memperbarui profil.";
@@ -76,32 +79,62 @@ $result = $stmt_member->get_result();
 if ($result->num_rows > 0) {
     $member = $result->fetch_assoc();
 } else {
-    // Jika member tidak ditemukan, logout untuk keamanan
     header('Location: logout.php');
     exit();
 }
 $stmt_member->close();
 
-// --- AMBIL RIWAYAT PESANAN DARI DATABASE ---
-$order_history = [];
-// [DIPERBAIKI] Mengubah filter dari o.member_id menjadi o.user_id agar sesuai dengan data login
-$sql_history = "SELECT o.id, o.created_at as order_date, o.status, o.total_amount, o.subtotal, o.tax, o.discount_amount,
-                    GROUP_CONCAT(CONCAT(oi.quantity, 'x ', m.name) SEPARATOR ',<br>') as items
-                    FROM orders o
-                    JOIN order_items oi ON o.id = oi.order_id
-                    JOIN menu m ON oi.menu_id = m.id
-                    WHERE o.user_id = ? 
-                    GROUP BY o.id
-                    ORDER BY o.created_at DESC";
+// --- AMBIL RIWAYAT PESANAN DENGAN DETAIL ITEM & ADDON ---
 
-$stmt_history = $conn->prepare($sql_history);
-$stmt_history->bind_param("i", $member_id);
-$stmt_history->execute();
-$result_history = $stmt_history->get_result();
-if ($result_history) {
-    $order_history = $result_history->fetch_all(MYSQLI_ASSOC);
+// 1. Ambil semua pesanan utama (orders) untuk member ini
+$orders = [];
+$sql_orders = "SELECT id, created_at as order_date, status, total_amount, subtotal, tax, discount_amount
+               FROM orders
+               WHERE user_id = ? AND status IN ('completed', 'paid')
+               ORDER BY created_at DESC";
+
+$stmt_orders = $conn->prepare($sql_orders);
+$stmt_orders->bind_param("i", $member_id);
+$stmt_orders->execute();
+$result_orders = $stmt_orders->get_result();
+if ($result_orders) {
+    $orders = $result_orders->fetch_all(MYSQLI_ASSOC);
 }
-$stmt_history->close();
+$stmt_orders->close();
+
+// 2. Ambil semua item pesanan (order_items) untuk pesanan-pesanan di atas
+$order_ids = array_column($orders, 'id');
+if (!empty($order_ids)) {
+    $placeholders = implode(',', array_fill(0, count($order_ids), '?'));
+    $types = str_repeat('i', count($order_ids));
+
+    $sql_items = "SELECT
+                    oi.order_id,
+                    oi.quantity,
+                    oi.price_per_item,
+                    oi.total_price,
+                    oi.selected_addons,
+                    m.name as menu_name
+                  FROM order_items oi
+                  JOIN menu m ON oi.menu_id = m.id
+                  WHERE oi.order_id IN ($placeholders)";
+
+    $stmt_items = $conn->prepare($sql_items);
+    $stmt_items->bind_param($types, ...$order_ids);
+    $stmt_items->execute();
+    $result_items = $stmt_items->get_result();
+    $all_order_items = [];
+    while ($row = $result_items->fetch_assoc()) {
+        $all_order_items[$row['order_id']][] = $row;
+    }
+    $stmt_items->close();
+
+    // 3. Gabungkan item ke dalam array pesanan utama
+    foreach ($orders as $key => $order) {
+        $orders[$key]['items'] = $all_order_items[$order['id']] ?? [];
+    }
+}
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -131,8 +164,7 @@ $conn->close();
     <!-- Navbar -->
     <nav class="bg-white shadow-sm sticky top-0 z-40">
         <div class="container mx-auto px-4 py-3 flex justify-between items-center">
-            <!-- [PERBAIKAN PATH] Arahkan kembali ke halaman pelanggan -->
-            <a href="index.php" class="text-xl font-black text-gray-900 tracking-tighter">KAFE KITA</a>
+            <a href="index.php" class="text-xl font-black text-gray-900 tracking-tighter"><?= htmlspecialchars($cafe_name); ?></a>
             <div class="flex items-center space-x-2">
                 <a href="index.php" class="text-gray-800 px-4 py-2 rounded-full font-bold hover:bg-gray-100 text-sm flex items-center">
                     <i class="fas fa-arrow-left mr-2"></i> Kembali
@@ -218,8 +250,8 @@ $conn->close();
 
             <!-- Konten Tab: Riwayat Pesanan -->
             <div id="riwayat-content" class="tab-pane hidden space-y-4">
-                <?php if (!empty($order_history)): ?>
-                    <?php foreach ($order_history as $order): ?>
+                <?php if (!empty($orders)): ?>
+                    <?php foreach ($orders as $order): ?>
                         <div class="bg-white rounded-xl shadow-sm overflow-hidden">
                             <div class="p-5 cursor-pointer flex justify-between items-center" onclick="toggleOrderDetails(<?= $order['id']; ?>)">
                                 <div class="flex-1">
@@ -233,8 +265,40 @@ $conn->close();
                                 <i id="icon-<?= $order['id']; ?>" class="fas fa-chevron-down text-gray-400 transition-transform"></i>
                             </div>
                             <div id="details-<?= $order['id']; ?>" class="hidden px-5 pb-5 border-t border-gray-200">
-                                <h4 class="font-semibold text-gray-700 pt-4 mb-2">Detail Item:</h4>
-                                <div class="text-sm text-gray-600 leading-relaxed mb-4"><?= $order['items']; ?></div>
+                                <h4 class="font-semibold text-gray-700 pt-4 mb-3">Rincian Item:</h4>
+                                <div class="space-y-3 text-sm mb-4">
+                                    <?php if (!empty($order['items'])): ?>
+                                        <?php foreach ($order['items'] as $item): ?>
+                                            <div class="pb-3 border-b border-dashed last:border-b-0">
+                                                <div class="flex justify-between items-start mb-1">
+                                                    <span class="font-medium text-gray-800"><?= $item['quantity']; ?>x <?= htmlspecialchars($item['menu_name']); ?></span>
+                                                    <span class="font-medium text-gray-800">Rp <?= number_format($item['price_per_item'] * $item['quantity']); ?></span>
+                                                </div>
+                                                <?php
+                                                if (!empty($item['selected_addons'])) {
+                                                    $addons = json_decode($item['selected_addons'], true);
+                                                    if (is_array($addons)) {
+                                                        foreach ($addons as $addon) {
+                                                ?>
+                                                            <div class="flex justify-between items-center text-xs text-gray-500 pl-4">
+                                                                <span>+ <?= htmlspecialchars($addon['name'] ?? $addon['option'] ?? ''); ?></span>
+                                                                <span>Rp <?= number_format($addon['price'] ?? 0); ?></span>
+                                                            </div>
+                                                <?php
+                                                        }
+                                                    }
+                                                }
+                                                ?>
+                                                <div class="flex justify-between items-center mt-2 font-bold text-gray-900">
+                                                    <span>Total Item</span>
+                                                    <span>Rp <?= number_format($item['total_price']); ?></span>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <p class="text-gray-500">Tidak ada item dalam pesanan ini.</p>
+                                    <?php endif; ?>
+                                </div>
                                 <div class="border-t border-gray-200 pt-3">
                                     <h4 class="font-semibold text-gray-700 mb-2">Rincian Biaya:</h4>
                                     <div class="space-y-1 text-sm text-gray-600">
@@ -253,7 +317,7 @@ $conn->close();
                                             <span>Rp <?= number_format($order['tax']); ?></span>
                                         </div>
                                         <div class="flex justify-between font-bold text-gray-800 mt-2 pt-2 border-t">
-                                            <span>Total Biaya</span>
+                                            <span>Total Bayar</span>
                                             <span>Rp <?= number_format($order['total_amount']); ?></span>
                                         </div>
                                     </div>
@@ -304,16 +368,11 @@ $conn->close();
 
     <script>
         function switchTab(tabName) {
-            // Sembunyikan semua panel konten
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
-
-            // Tampilkan panel yang sesuai
             const activePane = document.getElementById(tabName + '-content');
             if (activePane) {
                 activePane.classList.remove('hidden');
             }
-
-            // Atur status aktif pada tombol tab
             document.querySelectorAll('.tab-button').forEach(b => {
                 b.classList.remove('active');
                 b.classList.add('text-gray-500');
@@ -338,7 +397,6 @@ $conn->close();
         function toggleOrderDetails(orderId) {
             const details = document.getElementById('details-' + orderId);
             const icon = document.getElementById('icon-' + orderId);
-
             if (details && icon) {
                 details.classList.toggle('hidden');
                 icon.classList.toggle('rotate-180');
