@@ -1,10 +1,18 @@
 <?php
 // File: superadmin/laporan.php
 
+// Atur zona waktu
+date_default_timezone_set('Asia/Jakarta');
+
 // Hubungkan ke database terlebih dahulu untuk semua aksi
 require_once '../db_connect.php';
+// Hubungkan ke konfigurasi aplikasi untuk mengambil nama kafe
+require_once '../config.php';
 
-// --- AKSI UNTUK MENGAMBIL DETAIL PESANAN (JSON) ---
+
+// --- BAGIAN AKSI (ACTIONS) ---
+
+// AKSI 1: MENGAMBIL DETAIL PESANAN (JSON untuk Modal)
 if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_GET['id'])) {
     $order_id = (int)$_GET['id'];
     $response = ['success' => false, 'message' => 'Pesanan tidak ditemukan.'];
@@ -12,7 +20,6 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_
     $order_details = null;
     $order_items = [];
 
-    // [PERBAIKAN] Ambil data pesanan utama, tambahkan flag is_member
     $sql_order = "SELECT o.*, 
                          COALESCE(NULLIF(TRIM(mem.name), ''), NULLIF(TRIM(o.customer_name), ''), 'Guest') as customer_name_final, 
                          (o.member_id IS NOT NULL) as is_member,
@@ -30,7 +37,6 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_
         if ($result_order->num_rows > 0) {
             $order_details = $result_order->fetch_assoc();
 
-            // Ambil item pesanan yang terkait, termasuk addons
             $sql_items = "SELECT oi.quantity, m.name, oi.price_per_item as price, oi.total_price as subtotal, oi.selected_addons
                           FROM order_items oi
                           JOIN menu m ON oi.menu_id = m.id
@@ -59,96 +65,172 @@ if (isset($_GET['action']) && $_GET['action'] == 'get_order_details' && isset($_
     exit();
 }
 
-// --- LOGIKA UNTUK CETAK EXCEL (FORMAT CSV) ---
+// Atur tanggal default dan view
+$start_date = $_GET['start_date'] ?? date('Y-m-01');
+$end_date = $_GET['end_date'] ?? date('Y-m-d');
+$view = $_GET['view'] ?? 'ringkasan';
+
+// [PEROMBAKAN FINAL] AKSI 2: CETAK EXCEL (CSV) - Dengan Metrik Bisnis Tambahan
 if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
-    $start_date = $_GET['start_date'] ?? date('Y-m-01');
-    $end_date = $_GET['end_date'] ?? date('Y-m-d');
-
-    // [BARU] Hitung total pendapatan untuk periode yang dipilih
-    $total_revenue_for_export = 0;
-    $sql_total = "SELECT SUM(total_amount) as total FROM orders WHERE DATE(created_at) BETWEEN ? AND ?";
-    if ($stmt_total = $conn->prepare($sql_total)) {
-        $stmt_total->bind_param("ss", $start_date, $end_date);
-        $stmt_total->execute();
-        $result_total = $stmt_total->get_result();
-        if ($row_total = $result_total->fetch_assoc()) {
-            $total_revenue_for_export = $row_total['total'] ?? 0;
-        }
-        $stmt_total->close();
-    }
-
-    $filename = "Laporan_Penjualan_Detail_" . $start_date . "_sampai_" . $end_date . ".csv";
+    $filename = "Laporan_" . ucfirst($view) . "_" . $start_date . "_sampai_" . $end_date . ".csv";
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
-
     $output = fopen('php://output', 'w');
-    // Header CSV
-    fputcsv($output, ['ID Pesanan', 'Tanggal', 'Pelanggan', 'Kasir', 'Tipe Item', 'Nama Item', 'Jumlah', 'Harga Satuan', 'Harga Addon', 'Total Harga Item']);
 
-    // [PERBAIKAN] Query untuk mengambil semua item pesanan dengan join ke member_id
-    $sql_export = "SELECT 
-                        o.id as order_id, 
-                        o.created_at,
-                        COALESCE(NULLIF(TRIM(mem.name), ''), NULLIF(TRIM(o.customer_name), ''), 'Guest') as customer_name,
-                        COALESCE(uc.name, 'N/A') as cashier_name,
-                        m.name as menu_name,
-                        oi.quantity,
-                        oi.price_per_item,
-                        oi.total_price,
-                        oi.selected_addons
-                   FROM orders o
-                   JOIN order_items oi ON o.id = oi.order_id
-                   JOIN menu m ON oi.menu_id = m.id
-                   LEFT JOIN members mem ON o.member_id = mem.id
-                   LEFT JOIN users uc ON o.cashier_id = uc.id
-                   WHERE DATE(o.created_at) BETWEEN ? AND ?
-                   ORDER BY o.id ASC, oi.id ASC";
+    // Bagian 1: Header Laporan
+    $cafe_name = $APP_CONFIG['cafe_name'] ?? 'Cafe Anda';
+    $report_title = "Laporan " . ucfirst($view);
+    $report_period = "Periode: " . date('d F Y', strtotime($start_date)) . " - " . date('d F Y', strtotime($end_date));
 
-    if ($stmt_export = $conn->prepare($sql_export)) {
-        $stmt_export->bind_param("ss", $start_date, $end_date);
-        $stmt_export->execute();
-        $result_export = $stmt_export->get_result();
+    fputcsv($output, [$cafe_name]);
+    fputcsv($output, [$report_title]);
+    fputcsv($output, [$report_period]);
+    fputcsv($output, ['Laporan Dibuat Pada:', date('d F Y, H:i:s')]);
+    fputcsv($output, []); // Baris kosong
 
-        while ($row = $result_export->fetch_assoc()) {
-            // Baris untuk item utama
-            fputcsv($output, [
-                '#' . $row['order_id'],
-                date('d-m-Y H:i', strtotime($row['created_at'])),
-                $row['customer_name'],
-                $row['cashier_name'],
-                'Menu Utama',
-                $row['menu_name'],
-                $row['quantity'],
-                $row['price_per_item'],
-                '', // Harga addon kosong untuk item utama
-                $row['total_price']
-            ]);
+    // Bagian 2 & 3: Isi Data dan Footer
+    switch ($view) {
+        case 'menu':
+            fputcsv($output, ['Nama Menu', 'Kategori', 'Jumlah Terjual', 'Total Pendapatan (Rp)', 'Kontribusi Pendapatan (%)']);
+            $sql_export = "SELECT m.name as menu_name, m.category, SUM(oi.quantity) as total_sold, SUM(oi.total_price) as total_revenue FROM order_items oi JOIN menu m ON oi.menu_id = m.id JOIN orders o ON oi.order_id = o.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY oi.menu_id ORDER BY total_revenue DESC";
 
-            // Baris untuk setiap addon jika ada
-            $addons = json_decode($row['selected_addons'], true);
-            if (is_array($addons)) {
-                foreach ($addons as $addon) {
-                    fputcsv($output, [
-                        '',
-                        '',
-                        '',
-                        '', // Kolom pesanan kosong
-                        'Add-on',
-                        $addon['option_name'] ?? 'N/A',
-                        $row['quantity'], // Jumlah addon mengikuti jumlah item
-                        $addon['price'] ?? 0,
-                        '', // Total harga kosong
-                        ''
-                    ]);
+            if ($stmt = $conn->prepare($sql_export)) {
+                $stmt->bind_param("ss", $start_date, $end_date);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                $data_rows = $result->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+
+                $grand_total_revenue = array_sum(array_column($data_rows, 'total_revenue'));
+                $grand_total_sold = array_sum(array_column($data_rows, 'total_sold'));
+
+                foreach ($data_rows as $row) {
+                    $contribution = ($grand_total_revenue > 0) ? ($row['total_revenue'] / $grand_total_revenue) * 100 : 0;
+                    fputcsv($output, [$row['menu_name'], $row['category'], $row['total_sold'], $row['total_revenue'], number_format($contribution, 2)]);
                 }
+                fputcsv($output, []);
+                fputcsv($output, ['GRAND TOTAL', '', $grand_total_sold, $grand_total_revenue, '100.00']);
             }
-        }
-        $stmt_export->close();
-    }
+            break;
 
-    // [BARU] Tambahkan baris total di akhir file
-    fputcsv($output, []); // Baris kosong untuk spasi
-    fputcsv($output, ['', '', '', '', '', '', '', '', 'TOTAL PENDAPATAN', $total_revenue_for_export]);
+        case 'kategori':
+            fputcsv($output, ['Kategori Menu', 'Jumlah Terjual', 'Total Pendapatan (Rp)', 'Kontribusi Pendapatan (%)']);
+            $sql_export = "SELECT m.category, SUM(oi.quantity) as total_sold, SUM(oi.total_price) as total_revenue FROM order_items oi JOIN menu m ON oi.menu_id = m.id JOIN orders o ON oi.order_id = o.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY m.category ORDER BY total_revenue DESC";
+            if ($stmt = $conn->prepare($sql_export)) {
+                $stmt->bind_param("ss", $start_date, $end_date);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                $data_rows = $result->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+
+                $grand_total_revenue = array_sum(array_column($data_rows, 'total_revenue'));
+                $grand_total_sold = array_sum(array_column($data_rows, 'total_sold'));
+
+                foreach ($data_rows as $row) {
+                    $contribution = ($grand_total_revenue > 0) ? ($row['total_revenue'] / $grand_total_revenue) * 100 : 0;
+                    fputcsv($output, [$row['category'], $row['total_sold'], $row['total_revenue'], number_format($contribution, 2)]);
+                }
+                fputcsv($output, []);
+                fputcsv($output, ['GRAND TOTAL', $grand_total_sold, $grand_total_revenue, '100.00']);
+            }
+            break;
+
+        case 'member':
+            fputcsv($output, ['Nama Member', 'Total Transaksi', 'Total Belanja (Rp)', 'Rata-rata Belanja per Transaksi (Rp)']);
+            $sql_export = "SELECT m.name as member_name, COUNT(o.id) as total_transactions, SUM(o.total_amount) as total_spent FROM orders o JOIN members m ON o.member_id = m.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY o.member_id ORDER BY total_spent DESC";
+            $grand_total_transactions = 0;
+            $grand_total_spent = 0;
+            if ($stmt = $conn->prepare($sql_export)) {
+                $stmt->bind_param("ss", $start_date, $end_date);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                while ($row = $result->fetch_assoc()) {
+                    $avg_spent = ($row['total_transactions'] > 0) ? $row['total_spent'] / $row['total_transactions'] : 0;
+                    fputcsv($output, [$row['member_name'], $row['total_transactions'], $row['total_spent'], $avg_spent]);
+                    $grand_total_transactions += $row['total_transactions'];
+                    $grand_total_spent += $row['total_spent'];
+                }
+                $stmt->close();
+            }
+            fputcsv($output, []);
+            $grand_avg = ($grand_total_transactions > 0) ? $grand_total_spent / $grand_total_transactions : 0;
+            fputcsv($output, ['GRAND TOTAL', $grand_total_transactions, $grand_total_spent, $grand_avg]);
+            break;
+
+        case 'kasir':
+            fputcsv($output, ['Nama Kasir', 'Total Transaksi Dilayani', 'Total Pendapatan (Rp)', 'Rata-rata Pendapatan per Transaksi (Rp)']);
+            $sql_export = "SELECT u.name as cashier_name, COUNT(o.id) as total_transactions, SUM(o.total_amount) as total_revenue FROM orders o JOIN users u ON o.cashier_id = u.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY o.cashier_id ORDER BY total_revenue DESC";
+            $grand_total_transactions = 0;
+            $grand_total_revenue = 0;
+            if ($stmt = $conn->prepare($sql_export)) {
+                $stmt->bind_param("ss", $start_date, $end_date);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                while ($row = $result->fetch_assoc()) {
+                    $avg_revenue = ($row['total_transactions'] > 0) ? $row['total_revenue'] / $row['total_transactions'] : 0;
+                    fputcsv($output, [$row['cashier_name'], $row['total_transactions'], $row['total_revenue'], $avg_revenue]);
+                    $grand_total_transactions += $row['total_transactions'];
+                    $grand_total_revenue += $row['total_revenue'];
+                }
+                $stmt->close();
+            }
+            fputcsv($output, []);
+            $grand_avg = ($grand_total_transactions > 0) ? $grand_total_revenue / $grand_total_transactions : 0;
+            fputcsv($output, ['GRAND TOTAL', $grand_total_transactions, $grand_total_revenue, $grand_avg]);
+            break;
+
+        default: // 'ringkasan'
+            // Bagian 2a: Ringkasan Utama yang Diperkaya
+            $summary_data = ['total_rev' => 0, 'total_tx' => 0, 'total_disc' => 0, 'total_tax' => 0];
+            $sql_summary = "SELECT SUM(total_amount) as total_rev, COUNT(id) as total_tx, SUM(discount_amount) as total_disc, SUM(tax) as total_tax FROM orders WHERE DATE(created_at) BETWEEN ? AND ? AND status IN ('completed', 'paid')";
+            if ($stmt_sum = $conn->prepare($sql_summary)) {
+                $stmt_sum->bind_param("ss", $start_date, $end_date);
+                $stmt_sum->execute();
+                $res_sum = $stmt_sum->get_result();
+                if ($row = $res_sum->fetch_assoc()) {
+                    $summary_data = $row;
+                }
+                $stmt_sum->close();
+            }
+            fputcsv($output, ['Ringkasan Laporan']);
+            fputcsv($output, ['Total Pendapatan Kotor (Rp)', $summary_data['total_rev'] ?? 0]);
+            fputcsv($output, ['Total Diskon Diberikan (Rp)', $summary_data['total_disc'] ?? 0]);
+            fputcsv($output, ['Total Pajak Terkumpul (Rp)', $summary_data['total_tax'] ?? 0]);
+            fputcsv($output, ['Total Transaksi', $summary_data['total_tx'] ?? 0]);
+            $avg_trx = (($summary_data['total_tx'] ?? 0) > 0) ? (($summary_data['total_rev'] ?? 0) / $summary_data['total_tx']) : 0;
+            fputcsv($output, ['Rata-rata per Transaksi (Rp)', $avg_trx]);
+            fputcsv($output, []);
+
+            // Ringkasan Metode Pembayaran
+            fputcsv($output, ['Ringkasan Metode Pembayaran']);
+            $sql_payment = "SELECT payment_method, COUNT(id) as tx_count, SUM(total_amount) as total_rev FROM orders WHERE DATE(created_at) BETWEEN ? AND ? AND status IN ('completed', 'paid') GROUP BY payment_method";
+            if ($stmt_pay = $conn->prepare($sql_payment)) {
+                $stmt_pay->bind_param("ss", $start_date, $end_date);
+                $stmt_pay->execute();
+                $res_pay = $stmt_pay->get_result();
+                while ($row = $res_pay->fetch_assoc()) {
+                    $method_name = ucwords(str_replace('_', ' ', $row['payment_method']));
+                    fputcsv($output, [$method_name, "{$row['tx_count']} Transaksi", "Rp " . number_format($row['total_rev'])]);
+                }
+                $stmt_pay->close();
+            }
+            fputcsv($output, []);
+
+            // Bagian 2b: Detail Transaksi yang lebih lengkap
+            fputcsv($output, ['Detail Transaksi']);
+            fputcsv($output, ['ID Pesanan', 'Tanggal', 'Pelanggan', 'Kasir', 'Subtotal (Rp)', 'Diskon (Rp)', 'Pajak (Rp)', 'Total Bayar (Rp)', 'Metode Bayar']);
+            $sql_export = "SELECT o.id, o.created_at, COALESCE(mem.name, o.customer_name, 'Guest') as customer_name, COALESCE(uc.name, 'N/A') as cashier_name, o.subtotal, o.discount_amount, o.tax, o.total_amount, o.payment_method FROM orders o LEFT JOIN members mem ON o.member_id = mem.id LEFT JOIN users uc ON o.cashier_id = uc.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') ORDER BY o.created_at ASC";
+            if ($stmt = $conn->prepare($sql_export)) {
+                $stmt->bind_param("ss", $start_date, $end_date);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                while ($row = $result->fetch_assoc()) {
+                    fputcsv($output, $row);
+                }
+                $stmt->close();
+            }
+            break;
+    }
 
     fclose($output);
     $conn->close();
@@ -156,101 +238,68 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
 }
 
 
-// --- JIKA BUKAN AKSI DI ATAS, TAMPILKAN HALAMAN LAPORAN BIASA ---
+// --- BAGIAN TAMPILAN HALAMAN (VIEW) ---
 require_once 'includes/header.php';
 
-// Atur tanggal default
-$start_date = $_GET['start_date'] ?? date('Y-m-01');
-$end_date = $_GET['end_date'] ?? date('Y-m-d');
+// --- PENGAMBILAN DATA UNTUK TAMPILAN ---
+$report_data = [];
+$page_title = "Laporan Penjualan";
+$total_revenue = 0; // Untuk kartu statistik dan grafik
 
-// Inisialisasi variabel statistik
-$total_revenue = 0;
-$total_transactions = 0;
-$best_seller = ['name' => 'N/A', 'quantity' => 0];
-$most_profitable = ['name' => 'N/A', 'total' => 0];
-$top_member = ['name' => 'N/A', 'count' => 0]; // [BARU]
-$orders_data = [];
+// Query disesuaikan berdasarkan view yang dipilih
+switch ($view) {
+    case 'menu':
+        $page_title = "Laporan Performa Menu";
+        $sql_report = "SELECT m.name as menu_name, m.category, SUM(oi.quantity) as total_sold, SUM(oi.total_price) as total_revenue FROM order_items oi JOIN menu m ON oi.menu_id = m.id JOIN orders o ON oi.order_id = o.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY oi.menu_id ORDER BY total_revenue DESC";
+        break;
+    case 'kategori':
+        $page_title = "Laporan Penjualan per Kategori";
+        $sql_report = "SELECT m.category, SUM(oi.quantity) as total_sold, SUM(oi.total_price) as total_revenue FROM order_items oi JOIN menu m ON oi.menu_id = m.id JOIN orders o ON oi.order_id = o.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY m.category ORDER BY total_revenue DESC";
+        break;
+    case 'member':
+        $page_title = "Laporan Aktivitas Member";
+        $sql_report = "SELECT m.name as member_name, COUNT(o.id) as total_transactions, SUM(o.total_amount) as total_spent FROM orders o JOIN members m ON o.member_id = m.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY o.member_id ORDER BY total_spent DESC";
+        break;
+    case 'kasir':
+        $page_title = "Laporan Performa Kasir";
+        $sql_report = "SELECT u.name as cashier_name, COUNT(o.id) as total_transactions, SUM(o.total_amount) as total_revenue FROM orders o JOIN users u ON o.cashier_id = u.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY o.cashier_id ORDER BY total_revenue DESC";
+        break;
+    default: // 'ringkasan'
+        $page_title = "Laporan Ringkasan Penjualan";
+        // Query untuk detail pesanan di tabel ringkasan
+        $sql_report = "SELECT o.id, o.created_at, o.total_amount, COALESCE(mem.name, o.customer_name, 'Guest') as customer_name FROM orders o LEFT JOIN members mem ON o.member_id = mem.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') ORDER BY o.created_at DESC";
 
-// [PERBAIKAN] Query untuk mengambil data pesanan dengan join ke member_id
-$sql_orders = "SELECT o.id, o.created_at, o.total_amount, 
-                       COALESCE(mem.name, o.customer_name, 'Guest') as customer_name
-                FROM orders o
-                LEFT JOIN members mem ON o.member_id = mem.id
-                WHERE DATE(o.created_at) BETWEEN ? AND ?
-                ORDER BY o.created_at DESC";
+        // Data untuk Grafik Tren Penjualan
+        $chart_labels = [];
+        $chart_data = [];
+        $sql_chart = "SELECT DATE(created_at) as sales_date, SUM(total_amount) as daily_total FROM orders WHERE created_at BETWEEN ? AND ? AND status IN ('completed', 'paid') GROUP BY DATE(created_at) ORDER BY sales_date ASC";
+        if ($stmt_chart = $conn->prepare($sql_chart)) {
+            $stmt_chart->bind_param("ss", $start_date, $end_date);
+            $stmt_chart->execute();
+            $result_chart = $stmt_chart->get_result();
+            while ($row = $result_chart->fetch_assoc()) {
+                $chart_labels[] = date('d M', strtotime($row['sales_date']));
+                $chart_data[] = $row['daily_total'];
+            }
+            $stmt_chart->close();
+        }
+        break;
+}
 
-if ($stmt = $conn->prepare($sql_orders)) {
+if ($stmt = $conn->prepare($sql_report)) {
     $stmt->bind_param("ss", $start_date, $end_date);
     $stmt->execute();
     $result = $stmt->get_result();
-    if ($result) {
-        $orders_data = $result->fetch_all(MYSQLI_ASSOC);
-        $total_transactions = $result->num_rows;
-        foreach ($orders_data as $order) {
-            $total_revenue += $order['total_amount'];
-        }
-    }
+    $report_data = $result->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 }
 
-// Query untuk mencari produk terlaris
-$sql_bestseller = "SELECT m.name, SUM(oi.quantity) as total_quantity 
-                   FROM order_items oi
-                   JOIN orders o ON oi.order_id = o.id
-                   JOIN menu m ON oi.menu_id = m.id
-                   WHERE DATE(o.created_at) BETWEEN ? AND ?
-                   GROUP BY m.name ORDER BY total_quantity DESC LIMIT 1";
-
-if ($stmt_bs = $conn->prepare($sql_bestseller)) {
-    $stmt_bs->bind_param("ss", $start_date, $end_date);
-    $stmt_bs->execute();
-    $result_bs = $stmt_bs->get_result();
-    if ($result_bs && $result_bs->num_rows > 0) {
-        $best_seller_row = $result_bs->fetch_assoc();
-        $best_seller['name'] = $best_seller_row['name'];
-        $best_seller['quantity'] = $best_seller_row['total_quantity'];
+// Data untuk kartu statistik (hanya dihitung jika view 'ringkasan')
+if ($view === 'ringkasan') {
+    foreach ($report_data as $order) {
+        $total_revenue += $order['total_amount'];
     }
-    $stmt_bs->close();
-}
-
-// Query untuk produk paling menguntungkan
-$sql_profitable = "SELECT m.name, SUM(oi.total_price) as total_revenue
-                   FROM order_items oi
-                   JOIN orders o ON oi.order_id = o.id
-                   JOIN menu m ON oi.menu_id = m.id
-                   WHERE DATE(o.created_at) BETWEEN ? AND ?
-                   GROUP BY m.name ORDER BY total_revenue DESC LIMIT 1";
-if ($stmt_profit = $conn->prepare($sql_profitable)) {
-    $stmt_profit->bind_param("ss", $start_date, $end_date);
-    $stmt_profit->execute();
-    $result_profit = $stmt_profit->get_result();
-    if ($result_profit && $result_profit->num_rows > 0) {
-        $row_profit = $result_profit->fetch_assoc();
-        $most_profitable['name'] = $row_profit['name'];
-        $most_profitable['total'] = $row_profit['total_revenue'];
-    }
-    $stmt_profit->close();
-}
-
-// [BARU] Query untuk member dengan transaksi terbanyak
-$sql_top_member = "SELECT m.name, COUNT(o.id) as transaction_count
-                   FROM orders o
-                   JOIN members m ON o.member_id = m.id
-                   WHERE DATE(o.created_at) BETWEEN ? AND ?
-                   AND o.member_id IS NOT NULL
-                   GROUP BY o.member_id, m.name
-                   ORDER BY transaction_count DESC
-                   LIMIT 1";
-if ($stmt_top_member = $conn->prepare($sql_top_member)) {
-    $stmt_top_member->bind_param("ss", $start_date, $end_date);
-    $stmt_top_member->execute();
-    $result_top_member = $stmt_top_member->get_result();
-    if ($result_top_member && $result_top_member->num_rows > 0) {
-        $row_top_member = $result_top_member->fetch_assoc();
-        $top_member['name'] = $row_top_member['name'];
-        $top_member['count'] = $row_top_member['transaction_count'];
-    }
-    $stmt_top_member->close();
+    $total_transactions = count($report_data);
 }
 
 ?>
@@ -258,113 +307,132 @@ if ($stmt_top_member = $conn->prepare($sql_top_member)) {
 <div class="container mx-auto p-4 md:p-6">
     <!-- Header dan Filter -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <h1 class="text-3xl font-bold text-gray-800">Laporan Penjualan</h1>
+        <h1 class="text-3xl font-bold text-gray-800"><?= $page_title ?></h1>
         <div class="flex items-center gap-4">
-            <form method="GET" class="flex items-center gap-2 bg-white p-2 rounded-lg shadow">
+            <form id="filterForm" method="GET" class="flex items-center gap-2 bg-white p-2 rounded-lg shadow">
+                <input type="hidden" name="view" value="<?= htmlspecialchars($view) ?>">
                 <input type="date" name="start_date" value="<?= htmlspecialchars($start_date) ?>" class="border p-2 rounded-lg text-sm">
                 <span class="text-gray-500">hingga</span>
                 <input type="date" name="end_date" value="<?= htmlspecialchars($end_date) ?>" class="border p-2 rounded-lg text-sm">
-                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L12 12.414l-8.707-8.707A1 1 0 013 6V4z"></path>
-                    </svg> Filter
-                </button>
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">Filter</button>
             </form>
-            <a href="laporan.php?action=cetak_excel&start_date=<?= htmlspecialchars($start_date) ?>&end_date=<?= htmlspecialchars($end_date) ?>" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 shadow">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                </svg>
-                Cetak Excel
+            <a href="laporan.php?action=cetak_excel&view=<?= htmlspecialchars($view) ?>&start_date=<?= htmlspecialchars($start_date) ?>&end_date=<?= htmlspecialchars($end_date) ?>" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 shadow">
+                <i class="fas fa-file-excel"></i> Export
             </a>
         </div>
     </div>
 
-    <!-- Ringkasan Statistik -->
-    <div id="summary-section">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
-            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-green-100 p-4 rounded-full"><svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v.01"></path>
-                    </svg></div>
-                <div>
-                    <p class="text-sm text-gray-500">Total Pendapatan</p>
-                    <p class="text-2xl font-bold text-gray-800">Rp <?= number_format($total_revenue, 0, ',', '.') ?></p>
+    <!-- Navigasi Tab -->
+    <div class="mb-6 border-b border-gray-200">
+        <nav class="flex -mb-px space-x-6 overflow-x-auto">
+            <a href="?view=ringkasan&start_date=<?= $start_date ?>&end_date=<?= $end_date ?>" class="py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap <?= $view == 'ringkasan' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' ?>">Ringkasan</a>
+            <a href="?view=menu&start_date=<?= $start_date ?>&end_date=<?= $end_date ?>" class="py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap <?= $view == 'menu' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' ?>">Per Menu</a>
+            <a href="?view=kategori&start_date=<?= $start_date ?>&end_date=<?= $end_date ?>" class="py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap <?= $view == 'kategori' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' ?>">Per Kategori</a>
+            <a href="?view=member&start_date=<?= $start_date ?>&end_date=<?= $end_date ?>" class="py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap <?= $view == 'member' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' ?>">Per Member</a>
+            <a href="?view=kasir&start_date=<?= $start_date ?>&end_date=<?= $end_date ?>" class="py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap <?= $view == 'kasir' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' ?>">Per Kasir</a>
+        </nav>
+    </div>
+
+    <!-- Konten Dinamis Berdasarkan Tab -->
+    <?php if ($view === 'ringkasan'): ?>
+        <!-- Tampilan untuk Ringkasan -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Grafik Tren Pendapatan</h3>
+                <div class="relative h-80">
+                    <canvas id="salesTrendChart"></canvas>
                 </div>
             </div>
-            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-blue-100 p-4 rounded-full"><svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
-                    </svg></div>
-                <div>
-                    <p class="text-sm text-gray-500">Total Pesanan</p>
-                    <p class="text-2xl font-bold text-gray-800"><?= $total_transactions ?></p>
+            <div class="space-y-4">
+                <div class="bg-white p-6 rounded-xl shadow flex items-center gap-4">
+                    <i class="fas fa-wallet text-3xl text-green-500"></i>
+                    <div>
+                        <p class="text-sm text-gray-500">Total Pendapatan</p>
+                        <p class="text-2xl font-bold text-gray-800">Rp <?= number_format($total_revenue, 0, ',', '.') ?></p>
+                    </div>
                 </div>
-            </div>
-            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-yellow-100 p-4 rounded-full"><svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-12v4m-2-2h4m5 6v4m-2-2h4M17 3l-4.5 5.5L17 14l-5.5 4.5"></path>
-                    </svg></div>
-                <div>
-                    <p class="text-sm text-gray-500">Produk Terlaris</p>
-                    <p class="text-xl font-bold text-gray-800 truncate" title="<?= htmlspecialchars($best_seller['name']) ?>"><?= htmlspecialchars($best_seller['name']) ?></p>
-                </div>
-            </div>
-            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-purple-100 p-4 rounded-full"><svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-                    </svg></div>
-                <div>
-                    <p class="text-sm text-gray-500">Paling Menguntungkan</p>
-                    <p class="text-xl font-bold text-gray-800 truncate" title="<?= htmlspecialchars($most_profitable['name']) ?>"><?= htmlspecialchars($most_profitable['name']) ?></p>
-                </div>
-            </div>
-            <!-- [BARU] Card untuk Top Member -->
-            <div class="bg-white p-6 rounded-xl shadow-lg flex items-center gap-4">
-                <div class="bg-pink-100 p-4 rounded-full"><svg class="w-8 h-8 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                    </svg></div>
-                <div>
-                    <p class="text-sm text-gray-500">Top Member</p>
-                    <p class="text-xl font-bold text-gray-800 truncate" title="<?= htmlspecialchars($top_member['name']) ?>"><?= htmlspecialchars($top_member['name']) ?></p>
-                    <p class="text-xs text-gray-500"><?= $top_member['count'] ?> Transaksi</p>
+                <div class="bg-white p-6 rounded-xl shadow flex items-center gap-4">
+                    <i class="fas fa-receipt text-3xl text-blue-500"></i>
+                    <div>
+                        <p class="text-sm text-gray-500">Total Pesanan</p>
+                        <p class="text-2xl font-bold text-gray-800"><?= $total_transactions ?></p>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-
-
-    <!-- Tabel Laporan -->
-    <div class="bg-white rounded-xl shadow-lg overflow-x-auto">
-        <table id="report-table" class="min-w-full leading-normal">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">ID Pesanan</th>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Pelanggan</th>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Bayar (Rp)</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($orders_data)) : ?>
-                    <?php foreach ($orders_data as $order) : ?>
-                        <tr class="hover:bg-gray-100 cursor-pointer" data-order-id="<?= $order['id'] ?>">
-                            <td class="px-5 py-4 border-b border-gray-200 text-sm">#<?= $order['id'] ?></td>
-                            <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></td>
-                            <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium"><?= htmlspecialchars($order['customer_name'] ?? 'Guest') ?></td>
-                            <td class="px-5 py-4 border-b border-gray-200 text-sm text-right font-semibold"><?= number_format($order['total_amount'], 0, ',', '.') ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else : ?>
+        <h3 class="text-xl font-semibold text-gray-800 mb-4">Detail Transaksi</h3>
+        <div class="bg-white rounded-xl shadow-lg overflow-x-auto">
+            <table id="report-table" class="min-w-full leading-normal">
+                <thead class="bg-gray-50">
                     <tr>
-                        <td colspan="4" class="text-center py-10 text-gray-500">Tidak ada pesanan pada rentang tanggal yang dipilih.</td>
+                        <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
+                        <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase">Tanggal</th>
+                        <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase">Pelanggan</th>
+                        <th class="px-5 py-3 border-b-2 border-gray-200 text-right text-xs font-semibold text-gray-600 uppercase">Total (Rp)</th>
                     </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
+                </thead>
+                <tbody>
+                    <?php if (!empty($report_data)): ?>
+                        <?php foreach ($report_data as $order): ?>
+                            <tr class="hover:bg-gray-100 cursor-pointer" data-order-id="<?= $order['id'] ?>">
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm">#<?= $order['id'] ?></td>
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm"><?= date('d M Y, H:i', strtotime($order['created_at'])) ?></td>
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm font-medium"><?= htmlspecialchars($order['customer_name'] ?? 'Guest') ?></td>
+                                <td class="px-5 py-4 border-b border-gray-200 text-sm text-right font-semibold"><?= number_format($order['total_amount'], 0, ',', '.') ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="4" class="text-center py-10 text-gray-500">Tidak ada transaksi pada rentang tanggal ini.</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php else: ?>
+        <!-- Tampilan untuk Tabel Laporan Lainnya -->
+        <div class="bg-white rounded-xl shadow-lg overflow-x-auto">
+            <table class="min-w-full leading-normal">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <?php if (!empty($report_data)): ?>
+                            <?php foreach (array_keys($report_data[0]) as $header): ?>
+                                <th class="px-5 py-3 border-b-2 border-gray-200 text-left text-xs font-semibold text-gray-600 uppercase"><?= htmlspecialchars(ucwords(str_replace('_', ' ', $header))) ?></th>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($report_data)): ?>
+                        <?php foreach ($report_data as $row): ?>
+                            <tr class="hover:bg-gray-100">
+                                <?php foreach ($row as $key => $cell): ?>
+                                    <td class="px-5 py-4 border-b border-gray-200 text-sm">
+                                        <?php
+                                        // Format angka menjadi rupiah jika kolom berisi 'revenue', 'spent', atau 'total'
+                                        if (strpos($key, 'revenue') !== false || strpos($key, 'spent') !== false || strpos($key, 'total_amount') !== false) {
+                                            echo 'Rp ' . number_format($cell, 0, ',', '.');
+                                        } else {
+                                            echo htmlspecialchars($cell);
+                                        }
+                                        ?>
+                                    </td>
+                                <?php endforeach; ?>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="5" class="text-center py-10 text-gray-500">Tidak ada data untuk laporan ini pada rentang tanggal yang dipilih.</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+
 </div>
 
-<!-- Modal untuk Detail Pesanan -->
+<!-- Modal untuk Detail Pesanan (Tetap Sama, hanya aktif di tab Ringkasan) -->
 <div id="detailModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 m-4 animate-fade-in-up">
         <div class="flex justify-between items-center border-b pb-3 mb-3">
@@ -379,121 +447,109 @@ if ($stmt_top_member = $conn->prepare($sql_top_member)) {
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const tableBody = document.querySelector('#report-table tbody');
-        const modal = document.getElementById('detailModal');
-        const closeModalBtn = document.getElementById('closeModal');
-        const modalContent = document.getElementById('modalContent');
-        const modalOrderId = document.getElementById('modalOrderId');
+        // Logika Modal (hanya aktif jika ada tabel #report-table di tab ringkasan)
+        const reportTable = document.querySelector('#report-table');
+        if (reportTable) {
+            const modal = document.getElementById('detailModal');
+            const closeModalBtn = document.getElementById('closeModal');
+            const modalContent = document.getElementById('modalContent');
+            const modalOrderId = document.getElementById('modalOrderId');
 
-        if (!tableBody || !modal) return;
+            const openModal = () => modal.classList.remove('hidden');
+            const closeModal = () => modal.classList.add('hidden');
 
-        const openModal = () => modal.classList.remove('hidden');
-        const closeModal = () => modal.classList.add('hidden');
-
-        tableBody.addEventListener('click', function(e) {
-            const row = e.target.closest('tr');
-            if (row && row.dataset.orderId) {
-                const orderId = row.dataset.orderId;
-                openModal();
-                modalOrderId.textContent = `#${orderId}`;
-                modalContent.innerHTML = '<p class="text-center py-8 text-gray-500">Memuat data...</p>';
-
-                fetch(`laporan.php?action=get_order_details&id=${orderId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            renderModalContent(data.details, data.items);
-                        } else {
-                            modalContent.innerHTML = `<p class="text-center py-8 text-red-500">${data.message}</p>`;
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error fetching order details:', error);
-                        modalContent.innerHTML = '<p class="text-center py-8 text-red-500">Gagal memuat data. Silakan coba lagi.</p>';
-                    });
-            }
-        });
-
-        function renderModalContent(details, items) {
-            const orderDate = new Date(details.created_at).toLocaleString('id-ID', {
-                day: '2-digit',
-                month: 'long',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
+            reportTable.addEventListener('click', function(e) {
+                const row = e.target.closest('tr');
+                if (row && row.dataset.orderId) {
+                    const orderId = row.dataset.orderId;
+                    openModal();
+                    modalOrderId.textContent = `#${orderId}`;
+                    modalContent.innerHTML = '<p class="text-center py-8 text-gray-500">Memuat data...</p>';
+                    fetch(`laporan.php?action=get_order_details&id=${orderId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                renderModalContent(data.details, data.items);
+                            } else {
+                                modalContent.innerHTML = `<p class="text-center py-8 text-red-500">${data.message}</p>`;
+                            }
+                        });
+                }
             });
 
-            let itemsHtml = items.map(item => {
-                let baseItemTotal = item.quantity * item.price;
-                let addonsHtml = '';
-                try {
-                    const addons = JSON.parse(item.selected_addons);
-                    if (Array.isArray(addons) && addons.length > 0) {
-                        addonsHtml = addons.map(addon => {
-                            const addonPrice = parseFloat(addon.price || 0);
-                            const addonTotal = item.quantity * addonPrice;
-                            return `
-                            <div class="flex justify-between pl-4 text-gray-600 text-xs">
-                                <span>+ ${addon.option_name}</span>
-                                <span>${formatRupiah(addonTotal)}</span>
-                            </div>`;
-                        }).join('');
+            function renderModalContent(details, items) {
+                const orderDate = new Date(details.created_at).toLocaleString('id-ID', {
+                    day: '2-digit',
+                    month: 'long',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                let itemsHtml = items.map(item => {
+                    let baseItemTotal = item.quantity * item.price;
+                    let addonsHtml = '';
+                    try {
+                        const addons = JSON.parse(item.selected_addons);
+                        if (Array.isArray(addons) && addons.length > 0) {
+                            addonsHtml = addons.map(addon => `<div class="flex justify-between pl-4 text-gray-600 text-xs"><span>+ ${addon.option_name}</span><span>${formatRupiah(item.quantity * parseFloat(addon.price || 0))}</span></div>`).join('');
+                        }
+                    } catch (e) {}
+                    return `<div class="py-2 border-b last:border-b-0"><div class="flex justify-between"><span class="font-semibold">${item.quantity}x ${item.name}</span><span>${formatRupiah(baseItemTotal)}</span></div>${addonsHtml}<div class="flex justify-between items-center font-bold text-gray-800 border-t border-dashed mt-2 pt-1"><span>Total Item</span><span>${formatRupiah(item.subtotal)}</span></div></div>`;
+                }).join('');
+                const customerLabel = details.is_member ? 'Member' : 'Pelanggan';
+                modalContent.innerHTML = `<div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-4"><div class="text-gray-600">Tanggal:</div><div class="font-semibold text-right">${orderDate}</div><div class="text-gray-600">${customerLabel}:</div><div class="font-semibold text-right">${details.customer_name_final}</div><div class="text-gray-600">Kasir:</div><div class="font-semibold text-right">${details.cashier_name || 'N/A'}</div></div><h3 class="font-bold mt-4 mb-2 text-gray-700">Rincian Item</h3><div class="space-y-1 mb-4">${itemsHtml}</div><hr class="my-3 border-gray-200"><div class="space-y-1 text-right text-gray-800"><div class="flex justify-between"><span>Subtotal</span><span>${formatRupiah(details.subtotal)}</span></div><div class="flex justify-between"><span>Diskon</span><span>- ${formatRupiah(details.discount_amount)}</span></div><div class="flex justify-between"><span>PPN (11%)</span><span>${formatRupiah(details.tax)}</span></div><div class="flex justify-between font-bold text-lg border-t pt-2 mt-2"><span>TOTAL</span><span>${formatRupiah(details.total_amount)}</span></div><div class="flex justify-between text-sm text-gray-600"><span>Metode Bayar</span><span class="capitalize">${(details.payment_method || '').replace('_', ' ')}</span></div></div>`;
+            }
+
+            closeModalBtn.addEventListener('click', closeModal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeModal();
+            });
+        }
+
+        // Logika Grafik (hanya aktif jika ada canvas #salesTrendChart di tab ringkasan)
+        const salesChartCanvas = document.getElementById('salesTrendChart');
+        if (salesChartCanvas) {
+            const salesCtx = salesChartCanvas.getContext('2d');
+            new Chart(salesCtx, {
+                type: 'line',
+                data: {
+                    labels: <?= json_encode($chart_labels ?? []) ?>,
+                    datasets: [{
+                        label: 'Pendapatan (Rp)',
+                        data: <?= json_encode($chart_data ?? []) ?>,
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: (value) => formatRupiah(value)
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => `Pendapatan: ${formatRupiah(context.parsed.y)}`
+                            }
+                        }
                     }
-                } catch (e) {}
-
-                return `
-                <div class="py-2 border-b last:border-b-0">
-                    <div class="space-y-1">
-                        <div class="flex justify-between">
-                            <span class="font-semibold">${item.quantity}x ${item.name}</span>
-                            <span>${formatRupiah(baseItemTotal)}</span>
-                        </div>
-                        ${addonsHtml}
-                    </div>
-                    <div class="flex justify-between items-center font-bold text-gray-800 border-t border-dashed mt-2 pt-1">
-                        <span>Total Item</span>
-                        <span>${formatRupiah(item.subtotal)}</span>
-                    </div>
-                </div>
-            `;
-            }).join('');
-
-            // [PERBAIKAN] Logika untuk label pelanggan/member
-            const customerLabel = details.is_member ? 'Member' : 'Pelanggan';
-
-            modalContent.innerHTML = `
-            <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-4">
-                <div class="text-gray-600">Tanggal:</div>
-                <div class="font-semibold text-right">${orderDate}</div>
-                <div class="text-gray-600">${customerLabel}:</div>
-                <div class="font-semibold text-right">${details.customer_name_final}</div>
-                <div class="text-gray-600">Kasir:</div>
-                <div class="font-semibold text-right">${details.cashier_name || 'N/A'}</div>
-            </div>
-            
-            <h3 class="font-bold mt-4 mb-2 text-gray-700">Rincian Item</h3>
-            <div class="space-y-1 mb-4">
-                ${itemsHtml}
-            </div>
-
-            <hr class="my-3 border-gray-200">
-
-            <div class="space-y-1 text-right text-gray-800">
-                <div class="flex justify-between"><span>Subtotal</span><span>${formatRupiah(details.subtotal)}</span></div>
-                <div class="flex justify-between"><span>Diskon</span><span>- ${formatRupiah(details.discount_amount)}</span></div>
-                <div class="flex justify-between"><span>PPN (11%)</span><span>${formatRupiah(details.tax)}</span></div>
-                <div class="flex justify-between font-bold text-lg border-t pt-2 mt-2">
-                    <span>TOTAL</span>
-                    <span>${formatRupiah(details.total_amount)}</span>
-                </div>
-                 <div class="flex justify-between text-sm text-gray-600">
-                    <span>Metode Bayar</span>
-                    <span class="capitalize">${details.payment_method.replace('_', ' ')}</span>
-                </div>
-            </div>
-        `;
+                }
+            });
         }
 
         function formatRupiah(angka) {
@@ -503,13 +559,6 @@ if ($stmt_top_member = $conn->prepare($sql_top_member)) {
                 minimumFractionDigits: 0
             }).format(angka);
         }
-
-        closeModalBtn.addEventListener('click', closeModal);
-        modal.addEventListener('click', function(e) {
-            if (e.target === modal) {
-                closeModal();
-            }
-        });
     });
 </script>
 
