@@ -722,6 +722,8 @@ if ($result_banners) {
         </div>
     </main>
 
+
+
     <!-- Footer -->
     <footer class="bg-gray-900 text-white mt-12 py-10">
         <div class="container mx-auto px-4 text-center">
@@ -732,11 +734,14 @@ if ($result_banners) {
             <?php if (!empty($APP_CONFIG['cafe_phone'])) : ?>
                 <p class="text-gray-400 mb-1"><i class="fas fa-phone mr-2"></i><?= htmlspecialchars($APP_CONFIG['cafe_phone']) ?></p>
             <?php endif; ?>
-            <?php if (!empty($APP_CONFIG['hour_open']) && !empty($APP_CONFIG['hour_close'])) : ?>
-                <p class="text-gray-400 mb-4"><i class="fas fa-clock mr-2"></i>Buka: <?= htmlspecialchars($APP_CONFIG['hour_open']) ?> - <?= htmlspecialchars($APP_CONFIG['hour_close']) ?></p>
+
+            <?php if (!empty($APP_CONFIG['operating_hours'])) : ?>
+                <p class="text-gray-400 mb-1"><i class="fas fa-clock mr-2"></i><?= htmlspecialchars($APP_CONFIG['operating_hours']) ?></p>
             <?php endif; ?>
 
-            <div class="flex justify-center space-x-4">
+            <?php if (!empty($APP_CONFIG['operating_days'])) : ?>
+                <p class="text-gray-400 mb-4"><i class="fas fa-calendar-alt mr-2"></i><?= htmlspecialchars($APP_CONFIG['operating_days']) ?></p>
+            <?php endif; ?> <div class="flex justify-center space-x-4">
                 <?php if (!empty($APP_CONFIG['social_instagram'])) : ?>
                     <a href="<?= htmlspecialchars($APP_CONFIG['social_instagram']) ?>" target="_blank" class="text-gray-300 hover:text-white transition-colors text-2xl"><i class="fab fa-instagram"></i></a>
                 <?php endif; ?>

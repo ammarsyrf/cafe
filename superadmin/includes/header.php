@@ -6,6 +6,12 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+// Cek authentication admin - redirect jika belum login
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    header('Location: ../admin_login.php');
+    exit();
+}
+
 // Panggil file konfigurasi.
 require_once __DIR__ . '/../../config.php';
 
@@ -102,7 +108,7 @@ try {
                 </a>
             </nav>
             <div class="mt-auto">
-                <a href="<?= BASE_URL ?>logout.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-red-700 mt-2">
+                <a href="<?= BASE_URL ?>admin_logout.php" class="sidebar-link flex items-center py-3 px-4 rounded-lg transition duration-200 hover:bg-red-700 mt-2">
                     <i class="fas fa-sign-out-alt w-6 mr-3"></i> Logout
                 </a>
             </div>
@@ -120,7 +126,10 @@ try {
                     <h2 class="text-xl font-semibold text-gray-700" id="page-title">Dashboard</h2>
                 </div>
                 <div class="flex items-center">
-                    <span class="text-gray-600 mr-4 hidden sm:block">Selamat Datang, Super Admin!</span>
+                    <span class="text-gray-600 mr-4 hidden sm:block">
+                        Selamat Datang, <strong><?= htmlspecialchars($_SESSION['admin_name'] ?? 'Admin') ?></strong>!
+                        <span class="text-xs text-gray-500 ml-1">(<?= ucfirst($_SESSION['admin_role'] ?? 'admin') ?>)</span>
+                    </span>
                     <img src="https://placehold.co/40x40/5958A1/FFFFFF?text=A" alt="Admin" class="rounded-full">
                 </div>
             </header>
