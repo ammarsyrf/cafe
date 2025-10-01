@@ -18,10 +18,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $name = trim($_POST['name'] ?? '');
 $email = trim($_POST['email'] ?? '');
 $password = $_POST['password'] ?? '';
+$phone_number = trim($_POST['phone_number'] ?? '');
 
 // Validasi input
 if (empty($name) || empty($email) || empty($password)) {
-    $response['message'] = 'Semua kolom harus diisi.';
+    $response['message'] = 'Nama, email, dan password harus diisi.';
     echo json_encode($response);
     exit();
 }
@@ -36,6 +37,23 @@ if (strlen($password) < 6) {
     $response['message'] = 'Password minimal harus 6 karakter.';
     echo json_encode($response);
     exit();
+}
+
+// Validasi nomor telepon jika diisi
+if (!empty($phone_number)) {
+    // Hanya boleh berisi angka dan karakter + - ( ) dan spasi
+    if (!preg_match('/^[0-9+\-\(\)\s]+$/', $phone_number)) {
+        $response['message'] = 'Format nomor telepon tidak valid.';
+        echo json_encode($response);
+        exit();
+    }
+
+    // Minimal 10 karakter untuk nomor telepon Indonesia
+    if (strlen(preg_replace('/[^0-9]/', '', $phone_number)) < 10) {
+        $response['message'] = 'Nomor telepon minimal 10 digit.';
+        echo json_encode($response);
+        exit();
+    }
 }
 
 // Cek apakah email sudah terdaftar di tabel members
@@ -57,9 +75,9 @@ $stmt_check->close();
 $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
 // Masukkan data member baru ke database
-$sql_insert = "INSERT INTO members (name, email, password) VALUES (?, ?, ?)";
+$sql_insert = "INSERT INTO members (name, email, phone_number, password) VALUES (?, ?, ?, ?)";
 $stmt_insert = $conn->prepare($sql_insert);
-$stmt_insert->bind_param("sss", $name, $email, $hashed_password);
+$stmt_insert->bind_param("ssss", $name, $email, $phone_number, $hashed_password);
 
 if ($stmt_insert->execute()) {
     $response['success'] = true;
