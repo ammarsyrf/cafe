@@ -1,62 +1,102 @@
-# File Organization Summary
+# Ringkasan Organisasi File
 
-## Project Structure After Reorganization
+## Struktur Proyek Setelah Penataan Ulang
 
-- `.htaccess` - Server configuration
-- `error.html` - Error page
+- `.htaccess` - Konfigurasi server
+- `error.html` - Halaman error
 
 ### /app/
 
-- `/app/config/` - Configuration files
-  - `config.php` - Main configuration with PDO setup
-  - `db_connect.php` - Database connection
-- `/app/helpers/` - Helper classes and utilities
+- `/app/config/` - File konfigurasi
+  - `config.php` - Konfigurasi utama (PDO)
+  - `db_connect.php` - Koneksi database
+- `/app/helpers/` - Helper dan utilitas
 
-Authentication related files
+### /admin/
 
-- `kelola_kategori.php` - Category management
-- `laporan.php` - Reports
-- `/admin/includes/` - Admin header/footer
-- `/admin/menu/` - Menu management
-- `/admin/penjualan/` - Sales management
+- `kelola_kategori.php` - Manajemen kategori
+- `laporan.php` - Laporan
+- `/admin/includes/` - Header/footer admin
+- `/admin/menu/` - Manajemen menu
+- `/admin/penjualan/` - Manajemen penjualan
 
-### /cashier/ (renamed from kasir)
+### /cashier/ (sebelumnya kasir/)
 
-- `index.php` - Cashier dashboard with POS
-- `login_kasir.php` - Cashier login
+- `index.php` - Dashboard kasir & POS
+- `login_kasir.php` - Login kasir
+
+### /auth/
+
+- `admin_login.php` - Login admin/superadmin
+- `admin_logout.php` - Logout admin
+- `login.php` - Login member
+- `logout.php` - Logout member
+- `register.php` - Registrasi member
 
 ### /assets/
 
-Static assets
+- `/assets/css/` - File CSS (rencana)
 
-- `/assets/css/` - CSS files (future)
-  Utility scripts
+### /utils/
 
-- `setup.php` - Database setup
-- `debug.php` - Debug information
-- `buat_hash.php` - Password hash generator
+- `setup.php` - Setup database
+- `debug.php` - Debug
+- `buat_hash.php` - Generator hash password
 
 ### /docs/
 
-Documentation
-
-- `SECURITY_DOCUMENTATION.md` - Security implementation guide
-- `FILE_ORGANIZATION.md` - This file
+- `SECURITY_DOCUMENTATION.md` - Panduan keamanan
+- `FILE_ORGANIZATION.md` - Dokumentasi struktur file
 
 ### /libs/
 
-Third-party libraries
-
-- `/libs/phpqrcode/` - QR code generation library
+- `/libs/phpqrcode/` - Library QR code
 
 ### /uploads/
 
-User uploaded files
+- `/uploads/profiles/` - Foto profil member
+- `.htaccess` - Keamanan upload
 
-- `/uploads/profiles/` - Profile images
-- `.htaccess` - Upload security
+## File yang Dipindahkan
 
-## Path Updates Completed
+- `db_connect.php` & `config.php` dari root ke `/app/config/`
+- `middleware.php` dari root ke `/app/helpers/`
+- File login/logout/register admin/member ke `/auth/`
+- Folder `kasir/` diubah menjadi `cashier/`
+
+## Penjelasan
+
+Penataan ulang ini bertujuan agar:
+
+1. Setiap folder punya fungsi jelas (modul, konfigurasi, helper, dokumentasi, dll)
+2. Struktur lebih aman, file sensitif tidak di root
+3. Mudah dikembangkan dan dipelihara
+4. Semua `require_once` dan `include` sudah disesuaikan dengan struktur baru
+
+## Contoh Perubahan Path
+
+- Sebelumnya: `require_once 'db_connect.php';`
+- Sekarang: `require_once 'app/config/db_connect.php';`
+
+- Sebelumnya: `require_once 'config.php';`
+- Sekarang: `require_once 'app/config/config.php';`
+
+- Sebelumnya: `require_once '../middleware.php';`
+- Sekarang: `require_once '../app/helpers/middleware.php';`
+
+## Manfaat
+
+1. **Lebih Terstruktur**: Mudah cari file sesuai fungsinya
+2. **Keamanan**: File penting tidak di root
+3. **Scalable**: Mudah tambah fitur baru
+4. **Maintenance**: Mudah perbaikan & pengembangan
+
+## Saran Selanjutnya
+
+1. Tambah file CSS di `/assets/css/`
+2. Pertimbangkan menambah `/models/` dan `/controllers/` untuk pola MVC
+3. Tambah `/tests/` untuk unit test
+4. Pertimbangkan `/api/` untuk endpoint API
 
 All require_once and include statements have been updated to reflect the new file structure:
 

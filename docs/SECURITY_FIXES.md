@@ -1,59 +1,59 @@
-# Sistema Cafe - Security Issues Fixed
+# Sistem Cafe - Perbaikan Keamanan
 
-## Fixed Issues Summary
+## Ringkasan Perbaikan
 
-### 1. **Security Class Dependency Removed**
+### 1. **Penghapusan Ketergantungan Security Class**
 
-- **Problem**: Files were trying to use `Security` class methods that don't exist or have dependencies
-- **Files Fixed**:
-  - `auth/admin_login.php` - Completely rewritten without Security class
-  - `app/helpers/middleware.php` - Simplified without Security class dependencies
-- **Solution**: Replaced complex Security class calls with simple session management
+- **Masalah**: Beberapa file menggunakan class `Security` yang tidak ada atau bermasalah dependensi
+- **File yang Diperbaiki**:
+  - `auth/admin_login.php` - Ditulis ulang tanpa class Security
+  - `app/helpers/middleware.php` - Disederhanakan tanpa dependensi Security
+- **Solusi**: Semua pemanggilan class Security diganti dengan manajemen session yang sederhana
 
-### 2. **File Organization Completed**
+### 2. **Penataan Ulang Struktur File**
 
-- **Old Structure**: Files scattered in root directory
-- **New Structure**: Organized into logical folders
-  - `/app/config/` - Configuration files
-  - `/app/helpers/` - Helper classes
-  - `/auth/` - Authentication files
-  - `/admin/` - Admin panel (renamed from superadmin)
-  - `/cashier/` - Cashier panel (renamed from kasir)
-  - `/assets/` - Static assets
-  - `/utils/` - Utility scripts
-  - `/docs/` - Documentation
+- **Struktur Lama**: File tersebar di root
+- **Struktur Baru**: File dikelompokkan sesuai fungsinya
+  - `/app/config/` - File konfigurasi
+  - `/app/helpers/` - Helper
+  - `/auth/` - File autentikasi
+  - `/admin/` - Panel admin (dulu superadmin)
+  - `/cashier/` - Panel kasir (dulu kasir)
+  - `/assets/` - File statis
+  - `/utils/` - Skrip utilitas
+  - `/docs/` - Dokumentasi
 
-### 3. **Path References Updated**
+### 3. **Update Path File**
 
-- **Database connections**: Updated from `require_once 'db_connect.php'` to `require_once '../app/config/db_connect.php'`
-- **Configuration files**: Updated to point to `/app/config/config.php`
-- **Middleware**: Updated to point to `/app/helpers/middleware.php`
-- **Image paths**: Updated from `superadmin/` to `admin/` directory
+- **Koneksi database**: Dari `require_once 'db_connect.php'` menjadi `require_once '../app/config/db_connect.php'`
+- **File konfigurasi**: Sekarang di `/app/config/config.php`
+- **Middleware**: Sekarang di `/app/helpers/middleware.php`
+- **Path gambar**: Dari `superadmin/` ke `admin/`
 
-### 4. **Simplified Authentication System**
+### 4. **Sistem Autentikasi Disederhanakan**
 
-- **Admin Login**: Clean session-based authentication without complex security layers
-- **Middleware**: Basic but effective authentication checks
-- **Session Management**: Proper session handling with regeneration
+- **Login Admin**: Autentikasi berbasis session, tanpa lapisan security rumit
+- **Middleware**: Cek autentikasi sederhana namun efektif
+- **Manajemen Session**: Session diregenerasi dengan benar
 
-## Current System Status
+## Status Sistem Saat Ini
 
-### ✅ **Working Components**
+### ✅ **Komponen Berfungsi**
 
-- File organization structure
-- Path references updated
-- Basic authentication system
-- Simplified middleware
-- Clean admin login interface
+- Struktur file sudah rapi
+- Path file sudah diperbarui
+- Sistem autentikasi dasar berjalan
+- Middleware sederhana
+- Tampilan login admin bersih
 
-### 🔧 **Files Modified**
+### 🔧 **File yang Diubah**
 
-1. `auth/admin_login.php` - Completely rewritten
-2. `app/helpers/middleware.php` - Simplified
-3. `index.php` - Image paths updated
-4. All admin/, cashier/, and other files - Path references updated
+1. `auth/admin_login.php` - Ditulis ulang
+2. `app/helpers/middleware.php` - Disederhanakan
+3. `index.php` - Path gambar diperbarui
+4. Semua file admin/, cashier/, dan lainnya - Path file diperbarui
 
-### 📁 **File Structure**
+### 📁 **Struktur File**
 
 ```
 cafe/
@@ -71,24 +71,24 @@ cafe/
 │   ├── login.php
 │   ├── logout.php
 │   └── register.php
-├── admin/ (renamed from superadmin)
-├── cashier/ (renamed from kasir)
+├── admin/ (dulu superadmin)
+├── cashier/ (dulu kasir)
 ├── assets/js/
 ├── docs/
 ├── utils/
 └── uploads/
 ```
 
-## Next Steps
+## Langkah Selanjutnya
 
-1. **Test System**: Verify all authentication flows work
-2. **Database Setup**: Ensure users table has proper admin accounts
-3. **Security Headers**: Basic security headers are in place
-4. **Error Handling**: Proper error logging and user feedback
+1. **Tes Sistem**: Pastikan semua alur login/autentikasi berjalan
+2. **Setup Database**: Pastikan tabel users sudah ada admin
+3. **Header Keamanan**: Pastikan header keamanan dasar sudah aktif
+4. **Penanganan Error**: Logging error & feedback user sudah benar
 
-## Notes
+## Catatan
 
-- Removed complex Security class to eliminate dependency issues
-- Maintained basic security features like session regeneration and input sanitization
-- System is now stable and functional with clean code structure
-- All files properly organized for better maintenance
+- Class Security yang rumit sudah dihapus untuk menghindari masalah dependensi
+- Fitur keamanan dasar tetap dijaga: session regeneration, sanitasi input
+- Sistem sekarang stabil dan mudah dipelihara
+- Semua file sudah terorganisir untuk maintenance yang lebih baik
