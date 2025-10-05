@@ -12,8 +12,8 @@ if (!isset($_SESSION['member']) || $_SESSION['member']['role'] !== 'member') {
     exit();
 }
 
-require_once 'db_connect.php';
-require_once 'config.php'; // Untuk BASE_URL
+require_once 'app/config/db_connect.php';
+require_once 'app/config/config.php'; // Untuk BASE_URL
 
 // --- [PENAMBAHAN] AMBIL NAMA KAFE DARI PENGATURAN ---
 $cafe_name = 'Nama Cafe'; // Nama default
@@ -32,27 +32,63 @@ $success_message = '';
 
 // --- LOGIKA UNTUK UPDATE PROFIL ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
-    $name = trim($_POST['name']);
-    $email = trim($_POST['email']);
-    $phone = trim($_POST['phone_number']);
-    $current_image_url = $_POST['current_image_url'];
+    // Basic form validation
+    $name = trim(htmlspecialchars($_POST['name'] ?? '', ENT_QUOTES, 'UTF-8'));
+    $email = trim(htmlspecialchars($_POST['email'] ?? '', ENT_QUOTES, 'UTF-8'));
+    $phone = trim(htmlspecialchars($_POST['phone_number'] ?? '', ENT_QUOTES, 'UTF-8'));
+    $current_image_url = trim(htmlspecialchars($_POST['current_image_url'] ?? '', ENT_QUOTES, 'UTF-8'));
 
-    $profile_image_url = $current_image_url;
-    if (isset($_FILES['profile_image']) && $_FILES['profile_image']['error'] == 0) {
-        $file = $_FILES['profile_image'];
-        $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-        if (in_array($file['type'], $allowed_types)) {
-            if ($current_image_url) {
-                $old_file_path = str_replace(UPLOAD_URL, UPLOAD_DIR, $current_image_url);
-                if (file_exists($old_file_path)) @unlink($old_file_path);
+    // Validate input
+    if (empty($name) || empty($email)) {
+        $error_message = 'Nama dan email harus diisi.';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error_message = 'Format email tidak valid.';
+    } elseif (!empty($phone) && !preg_match('/^[0-9+\-\s]+$/', $phone)) {
+        $error_message = 'Format nomor telepon tidak valid.';
+    } else {
+        $profile_image_url = $current_image_url;
+
+        // Handle file upload securely
+        if (isset($_FILES['profile_image']) && $_FILES['profile_image']['error'] == UPLOAD_ERR_OK) {
+            try {
+                $file = $_FILES['profile_image'];
+
+                // Basic file validation
+                $allowed_types = ['jpg', 'jpeg', 'png'];
+                $max_size = 2097152; // 2MB limit
+                $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+                if (!in_array($file_ext, $allowed_types)) {
+                    throw new Exception('Format file tidak diizinkan. Gunakan JPG, JPEG, atau PNG.');
+                }
+                if ($file['size'] > $max_size) {
+                    throw new Exception('Ukuran file terlalu besar. Maksimal 2MB.');
+                }
+
+                // Create upload directory if not exists
+                if (!is_dir(UPLOAD_DIR)) {
+                    mkdir(UPLOAD_DIR, 0755, true);
+                }
+
+                // Delete old image securely
+                if ($current_image_url) {
+                    $old_file_path = str_replace(UPLOAD_URL, UPLOAD_DIR, $current_image_url);
+                    if (file_exists($old_file_path) && is_file($old_file_path)) {
+                        unlink($old_file_path);
+                    }
+                }
+
+                // Generate secure filename
+                $new_filename = 'member_' . $member_id . '_' . time() . '.' . $file_ext;
+
+                if (move_uploaded_file($file['tmp_name'], UPLOAD_DIR . $new_filename)) {
+                    $profile_image_url = UPLOAD_URL . $new_filename;
+                } else {
+                    throw new RuntimeException('Failed to move uploaded file.');
+                }
+            } catch (Exception $e) {
+                $error_message = 'Gagal mengunggah gambar: ' . $e->getMessage();
             }
-            $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $new_filename = 'member_' . $member_id . '_' . time() . '.' . $ext;
-            if (move_uploaded_file($file['tmp_name'], UPLOAD_DIR . $new_filename)) {
-                $profile_image_url = UPLOAD_URL . $new_filename;
-            }
-        } else {
-            $error_message = 'Format file tidak didukung.';
         }
     }
 
@@ -79,7 +115,7 @@ $result = $stmt_member->get_result();
 if ($result->num_rows > 0) {
     $member = $result->fetch_assoc();
 } else {
-    header('Location: logout.php');
+    header('Location: auth/logout.php');
     exit();
 }
 $stmt_member->close();
@@ -169,7 +205,7 @@ $conn->close();
                 <a href="index.php" class="text-gray-800 px-4 py-2 rounded-full font-bold hover:bg-gray-100 text-sm flex items-center">
                     <i class="fas fa-arrow-left mr-2"></i> Kembali
                 </a>
-                <a href="logout.php" class="bg-red-500 text-white px-4 py-2 rounded-full font-bold hover:bg-red-600 text-sm">Logout</a>
+                <a href="auth/logout.php" class="bg-red-500 text-white px-4 py-2 rounded-full font-bold hover:bg-red-600 text-sm">Logout</a>
             </div>
         </div>
     </nav>
@@ -351,14 +387,30 @@ $conn->close();
                             <p class="font-bold text-gray-800">Gratis 1 Kopi Susu</p>
                             <p class="text-sm text-yellow-600 font-semibold">100 Poin</p>
                         </div>
-                        <button onclick="alert('Fitur penukaran poin akan segera hadir!')" class="bg-yellow-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-yellow-600">Tukar</button>
+                        <button onclick="showPoinModal('Gratis 1 Kopi Susu')" class="bg-yellow-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-yellow-600">Tukar</button>
                     </div>
                     <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                         <div>
                             <p class="font-bold text-gray-800">Potongan Harga Rp 10.000</p>
                             <p class="text-sm text-yellow-600 font-semibold">500 Poin</p>
                         </div>
-                        <button onclick="alert('Fitur penukaran poin akan segera hadir!')" class="bg-yellow-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-yellow-600">Tukar</button>
+                        <button onclick="showPoinModal('Potongan Harga Rp 10.000')" class="bg-yellow-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-yellow-600">Tukar</button>
+                    </div>
+                    <div class="mt-4 text-center text-sm text-gray-500">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        Fitur penukaran poin belum tersedia. Silakan tunggu update selanjutnya.
+                    </div>
+                    <!-- Modal for interactive notification -->
+                    <div id="poinModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 hidden">
+                        <div class="bg-white rounded-xl shadow-lg p-8 max-w-sm w-full text-center relative">
+                            <button onclick="closePoinModal()" class="absolute top-2 right-2 text-gray-400 hover:text-gray-700 text-xl">&times;</button>
+                            <div class="mb-4">
+                                <i class="fas fa-gift text-yellow-500 text-4xl mb-2"></i>
+                                <h4 id="poinModalTitle" class="font-bold text-lg text-gray-800 mb-2"></h4>
+                                <p class="text-gray-600">Fitur penukaran poin untuk hadiah ini belum tersedia.<br>Silakan tunggu update selanjutnya.</p>
+                            </div>
+                            <button onclick="closePoinModal()" class="bg-yellow-500 text-white px-6 py-2 rounded-lg font-bold hover:bg-yellow-600 mt-2">Tutup</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -367,6 +419,15 @@ $conn->close();
     </main>
 
     <script>
+        function showPoinModal(reward) {
+            document.getElementById('poinModalTitle').textContent = reward;
+            document.getElementById('poinModal').classList.remove('hidden');
+        }
+
+        function closePoinModal() {
+            document.getElementById('poinModal').classList.add('hidden');
+        }
+
         function switchTab(tabName) {
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
             const activePane = document.getElementById(tabName + '-content');

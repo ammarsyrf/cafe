@@ -2,9 +2,9 @@
 // File: index.php
 // Halaman untuk pelanggan (dapat diakses melalui QR code di meja)
 
-// [PERBAIKAN PATH] Keluar satu folder untuk menemukan file koneksi
-require_once 'db_connect.php';
-require_once 'config.php';
+// Load konfigurasi dari struktur folder yang baru
+require_once 'app/config/db_connect.php';
+require_once 'app/config/config.php';
 
 
 // Memastikan sesi hanya dimulai sekali
@@ -612,7 +612,7 @@ if ($result_banners) {
                             <a href="member.php" title="Lihat Profil" class="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-full font-bold hover:bg-blue-700 transition-colors text-sm">
                                 <i class="fas fa-user"></i>
                             </a>
-                            <a href="logout.php" class="bg-gray-800 text-white px-3 md:px-4 py-2 rounded-full font-bold hover:bg-gray-900 transition-colors text-sm">Logout</a>
+                            <a href="auth/logout.php" class="bg-gray-800 text-white px-3 md:px-4 py-2 rounded-full font-bold hover:bg-gray-900 transition-colors text-sm">Logout</a>
                         </div>
                     <?php else : ?>
                         <button id="loginButton" class="bg-gray-800 text-white px-3 md:px-4 py-2 rounded-full font-bold hover:bg-gray-900 transition-colors text-sm">Login</button>
@@ -633,7 +633,7 @@ if ($result_banners) {
                                 <a href="<?= htmlspecialchars($banner['link_url'] ?? '#') ?>">
                                     <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
                                     <!-- [PERBAIKAN] Menggunakan BASE_URL untuk path absolut -->
-                                    <img src="<?= BASE_URL ?>superadmin/<?= htmlspecialchars($banner['image_url']) ?>" alt="<?= htmlspecialchars($banner['title']) ?>" class="w-full h-56 md:h-80 object-cover">
+                                    <img src="<?= BASE_URL ?>admin/<?= htmlspecialchars($banner['image_url']) ?>" alt="<?= htmlspecialchars($banner['title']) ?>" class="w-full h-56 md:h-80 object-cover">
                                     <div class="absolute bottom-0 left-0 p-5 md:p-8">
                                         <h2 class="text-white text-2xl md:text-4xl font-extrabold"><?= htmlspecialchars($banner['title']) ?></h2>
                                         <p class="text-white/90 text-sm md:text-base mt-1 max-w-lg"><?= htmlspecialchars($banner['subtitle']) ?></p>
@@ -686,7 +686,7 @@ if ($result_banners) {
                                     data-item-name="<?= htmlspecialchars($item['name']) ?>"
                                     data-item-price="<?= (isset($item['discount_price']) && $item['discount_price'] > 0) ? $item['discount_price'] : $item['price'] ?>">
                                     <div class="h-56 w-full rounded-xl overflow-hidden relative mb-4">
-                                        <img src="<?= BASE_URL ?>superadmin/<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
+                                        <img src="<?= BASE_URL ?>admin/<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110">
                                         <?php if (isset($item['discount_price']) && $item['discount_price'] > 0 && $item['discount_price'] < $item['price']) : ?>
                                             <div class="absolute top-3 right-3 bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">PROMO</div>
                                         <?php endif; ?>
@@ -1056,7 +1056,7 @@ if ($result_banners) {
             // [PERBAIKAN PATH] Logika login yang bisa dipakai ulang
             const performLogin = async (formData, errorElId) => {
                 try {
-                    const response = await fetch('login.php', {
+                    const response = await fetch('auth/login.php', {
                         method: 'POST',
                         body: formData
                     });
@@ -1105,7 +1105,7 @@ if ($result_banners) {
             registerForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const formData = new FormData(registerForm);
-                const response = await fetch('register.php', {
+                const response = await fetch('auth/register.php', {
                     method: 'POST',
                     body: formData
                 });
@@ -1247,7 +1247,7 @@ if ($result_banners) {
 
                         return `<div class="flex items-start justify-between bg-white p-3 rounded-lg shadow-sm">
                                     <div class="flex items-start space-x-3 w-full">
-                                        <img src="${BASE_URL}superadmin/${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md">
+                                        <img src="${BASE_URL}admin/${item.image}" alt="${item.name}" class="w-20 h-20 object-cover rounded-md">
                                         <div class="flex-grow">
                                             <p class="font-bold text-gray-800 text-md">${item.name}</p>
                                             ${addonsHTML}
@@ -1305,6 +1305,12 @@ if ($result_banners) {
                 showToast(decodeURIComponent(urlParams.get('error')), false);
                 const cleanUrl = new URL(window.location.href);
                 cleanUrl.searchParams.delete('error');
+                window.history.replaceState({}, '', cleanUrl);
+            }
+            if (urlParams.has('success')) {
+                showToast(decodeURIComponent(urlParams.get('success')), true);
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.searchParams.delete('success');
                 window.history.replaceState({}, '', cleanUrl);
             }
 
