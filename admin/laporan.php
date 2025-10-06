@@ -70,29 +70,127 @@ $start_date = $_GET['start_date'] ?? date('Y-m-01');
 $end_date = $_GET['end_date'] ?? date('Y-m-d');
 $view = $_GET['view'] ?? 'ringkasan';
 
-// [PEROMBAKAN FINAL] AKSI 2: CETAK EXCEL (CSV) - Dengan Metrik Bisnis Tambahan
+// AKSI 2: EXPORT EXCEL (CSV) - Format Lebih Rapi dan Profesional
 if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
-    $filename = "Laporan_" . ucfirst($view) . "_" . $start_date . "_sampai_" . $end_date . ".csv";
+    $filename = "Laporan_" . ucfirst($view) . "_" . date('Y-m-d', strtotime($start_date)) . "_sampai_" . date('Y-m-d', strtotime($end_date)) . ".csv";
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     $output = fopen('php://output', 'w');
 
-    // Bagian 1: Header Laporan
-    $cafe_name = $APP_CONFIG['cafe_name'] ?? 'Cafe Anda';
-    $report_title = "Laporan " . ucfirst($view);
-    $report_period = "Periode: " . date('d F Y', strtotime($start_date)) . " - " . date('d F Y', strtotime($end_date));
+    // BOM untuk encoding UTF-8 agar Excel membaca dengan benar
+    fwrite($output, "\xEF\xBB\xBF");
 
+    // HEADER LAPORAN - Format Profesional
+    $cafe_name = $APP_CONFIG['cafe_name'] ?? 'CAFE ANDA';
+    $report_title = strtoupper("LAPORAN " . str_replace('_', ' ', $view));
+    $report_period = date('d F Y', strtotime($start_date)) . " s/d " . date('d F Y', strtotime($end_date));
+
+    // Hitung ringkasan global untuk header
+    $global_summary = ['total_transactions' => 0, 'total_revenue' => 0, 'total_items' => 0];
+    $sql_global = "SELECT COUNT(DISTINCT o.id) as total_transactions, SUM(o.total_amount) as total_revenue, SUM(oi.quantity) as total_items 
+                   FROM orders o 
+                   LEFT JOIN order_items oi ON o.id = oi.order_id 
+                   WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid')";
+    if ($stmt_global = $conn->prepare($sql_global)) {
+        $stmt_global->bind_param("ss", $start_date, $end_date);
+        $stmt_global->execute();
+        $result_global = $stmt_global->get_result();
+        if ($row = $result_global->fetch_assoc()) {
+            $global_summary = $row;
+        }
+        $stmt_global->close();
+    }
+
+    fputcsv($output, ['=================================================================================']);
     fputcsv($output, [$cafe_name]);
     fputcsv($output, [$report_title]);
-    fputcsv($output, [$report_period]);
-    fputcsv($output, ['Laporan Dibuat Pada:', date('d F Y, H:i:s')]);
+    fputcsv($output, ['=================================================================================']);
+    fputcsv($output, ['PERIODE LAPORAN', $report_period]);
+    fputcsv($output, ['TOTAL TRANSAKSI', number_format($global_summary['total_transactions'] ?? 0) . ' transaksi']);
+    fputcsv($output, ['TOTAL PENDAPATAN', 'Rp ' . number_format($global_summary['total_revenue'] ?? 0, 0, ',', '.')]);
+    fputcsv($output, ['TOTAL ITEM TERJUAL', number_format($global_summary['total_items'] ?? 0) . ' item']);
+    fputcsv($output, ['DICETAK PADA', date('d F Y, H:i:s') . ' WIB']);
+    fputcsv($output, ['=================================================================================']);
     fputcsv($output, []); // Baris kosong
 
-    // Bagian 2 & 3: Isi Data dan Footer
+    // KONTEN LAPORAN BERDASARKAN VIEW
     switch ($view) {
+        case 'keuangan':
+            // Header Laporan Keuangan
+            fputcsv($output, ['LAPORAN KEUANGAN TRANSAKSI']);
+            fputcsv($output, ['=================================================================================']);
+            // Ringkasan
+            $sql_summary = "SELECT SUM(total_amount) as total_rev, SUM(discount_amount) as total_disc, SUM(tax) as total_tax, COUNT(id) as total_tx FROM orders WHERE DATE(created_at) BETWEEN ? AND ? AND status IN ('completed', 'paid')";
+            $summary = ['total_rev' => 0, 'total_disc' => 0, 'total_tax' => 0, 'total_tx' => 0];
+            if ($stmt_sum = $conn->prepare($sql_summary)) {
+                $stmt_sum->bind_param("ss", $start_date, $end_date);
+                $stmt_sum->execute();
+                $res_sum = $stmt_sum->get_result();
+                if ($row = $res_sum->fetch_assoc()) {
+                    $summary = $row;
+                }
+                $stmt_sum->close();
+            }
+            $net_revenue = ($summary['total_rev'] ?? 0) - ($summary['total_disc'] ?? 0);
+            fputcsv($output, ['Ringkasan Keuangan']);
+            fputcsv($output, ['Pendapatan Kotor', 'Rp ' . number_format($summary['total_rev'] ?? 0, 0, ',', '.')]);
+            fputcsv($output, ['Total Diskon', 'Rp ' . number_format($summary['total_disc'] ?? 0, 0, ',', '.')]);
+            fputcsv($output, ['Pendapatan Bersih', 'Rp ' . number_format($net_revenue, 0, ',', '.')]);
+            fputcsv($output, ['Total Pajak', 'Rp ' . number_format($summary['total_tax'] ?? 0, 0, ',', '.')]);
+            fputcsv($output, ['Total Transaksi', number_format($summary['total_tx'] ?? 0)]);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, []);
+            // Detail Transaksi
+            fputcsv($output, ['DETAIL TRANSAKSI KEUANGAN']);
+            fputcsv($output, ['Tanggal', 'ID Order', 'Pelanggan', 'Total', 'Diskon', 'Pajak', 'Metode Bayar', 'Kasir']);
+            $sql_detail = "SELECT o.id, o.created_at, o.total_amount, o.discount_amount, o.tax, o.payment_method, COALESCE(mem.name, o.customer_name, 'Guest') as customer_name, COALESCE(u.name, 'N/A') as cashier_name FROM orders o LEFT JOIN members mem ON o.member_id = mem.id LEFT JOIN users u ON o.cashier_id = u.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') ORDER BY o.created_at ASC";
+            $grand_total = 0;
+            $grand_disc = 0;
+            $grand_tax = 0;
+            if ($stmt_detail = $conn->prepare($sql_detail)) {
+                $stmt_detail->bind_param("ss", $start_date, $end_date);
+                $stmt_detail->execute();
+                $result_detail = $stmt_detail->get_result();
+                while ($row = $result_detail->fetch_assoc()) {
+                    fputcsv($output, [
+                        date('d-m-Y H:i', strtotime($row['created_at'])),
+                        '#' . $row['id'],
+                        $row['customer_name'],
+                        'Rp ' . number_format($row['total_amount'], 0, ',', '.'),
+                        'Rp ' . number_format($row['discount_amount'], 0, ',', '.'),
+                        'Rp ' . number_format($row['tax'], 0, ',', '.'),
+                        ucfirst(str_replace('_', ' ', $row['payment_method'])),
+                        $row['cashier_name']
+                    ]);
+                    $grand_total += $row['total_amount'];
+                    $grand_disc += $row['discount_amount'];
+                    $grand_tax += $row['tax'];
+                }
+                $stmt_detail->close();
+            }
+            // Footer
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['TOTAL KESELURUHAN', '', '', 'Rp ' . number_format($grand_total, 0, ',', '.'), 'Rp ' . number_format($grand_disc, 0, ',', '.'), 'Rp ' . number_format($grand_tax, 0, ',', '.'), '', '']);
+            fputcsv($output, ['=================================================================================']);
+            break;
         case 'menu':
-            fputcsv($output, ['Nama Menu', 'Kategori', 'Jumlah Terjual', 'Total Pendapatan (Rp)', 'Kontribusi Pendapatan (%)']);
-            $sql_export = "SELECT m.name as menu_name, m.category, SUM(oi.quantity) as total_sold, SUM(oi.total_price) as total_revenue FROM order_items oi JOIN menu m ON oi.menu_id = m.id JOIN orders o ON oi.order_id = o.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY oi.menu_id ORDER BY total_revenue DESC";
+            // Header Tabel
+            fputcsv($output, ['LAPORAN PERFORMA MENU']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['NO', 'NAMA MENU', 'KATEGORI', 'QTY TERJUAL', 'HARGA RATA-RATA', 'TOTAL PENDAPATAN', 'KONTRIBUSI (%)', 'RANK PENJUALAN']);
+            fputcsv($output, ['=================================================================================']);
+
+            $sql_export = "SELECT m.name as menu_name, m.category, m.price as menu_price, 
+                          SUM(oi.quantity) as total_sold, 
+                          SUM(oi.total_price) as total_revenue,
+                          AVG(oi.price_per_item) as avg_price,
+                          COUNT(DISTINCT o.id) as total_transactions
+                          FROM order_items oi 
+                          JOIN menu m ON oi.menu_id = m.id 
+                          JOIN orders o ON oi.order_id = o.id 
+                          WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') 
+                          GROUP BY oi.menu_id 
+                          ORDER BY total_revenue DESC";
 
             if ($stmt = $conn->prepare($sql_export)) {
                 $stmt->bind_param("ss", $start_date, $end_date);
@@ -103,19 +201,56 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
 
                 $grand_total_revenue = array_sum(array_column($data_rows, 'total_revenue'));
                 $grand_total_sold = array_sum(array_column($data_rows, 'total_sold'));
+                $grand_total_transactions = array_sum(array_column($data_rows, 'total_transactions'));
+                $no = 1;
 
                 foreach ($data_rows as $row) {
                     $contribution = ($grand_total_revenue > 0) ? ($row['total_revenue'] / $grand_total_revenue) * 100 : 0;
-                    fputcsv($output, [$row['menu_name'], $row['category'], $row['total_sold'], $row['total_revenue'], number_format($contribution, 2)]);
+                    $rank = '';
+                    if ($contribution >= 20) $rank = 'TOP SELLER';
+                    elseif ($contribution >= 10) $rank = 'POPULER';
+                    elseif ($contribution >= 5) $rank = 'SEDANG';
+                    else $rank = 'RENDAH';
+
+                    fputcsv($output, [
+                        $no++,
+                        $row['menu_name'],
+                        $row['category'],
+                        number_format($row['total_sold']) . ' pcs',
+                        'Rp ' . number_format($row['avg_price'], 0, ',', '.'),
+                        'Rp ' . number_format($row['total_revenue'], 0, ',', '.'),
+                        number_format($contribution, 2) . '%',
+                        $rank
+                    ]);
                 }
-                fputcsv($output, []);
-                fputcsv($output, ['GRAND TOTAL', '', $grand_total_sold, $grand_total_revenue, '100.00']);
+
+                // Footer Summary
+                fputcsv($output, ['=================================================================================']);
+                fputcsv($output, ['', 'TOTAL KESELURUHAN', count($data_rows) . ' menu', number_format($grand_total_sold) . ' pcs', '', 'Rp ' . number_format($grand_total_revenue, 0, ',', '.'), '100.00%', '']);
+                fputcsv($output, ['', 'RATA-RATA PER MENU', '', number_format($grand_total_sold / max(count($data_rows), 1), 2) . ' pcs', '', 'Rp ' . number_format($grand_total_revenue / max(count($data_rows), 1), 0, ',', '.'), '', '']);
+                fputcsv($output, ['=================================================================================']);
             }
             break;
 
         case 'kategori':
-            fputcsv($output, ['Kategori Menu', 'Jumlah Terjual', 'Total Pendapatan (Rp)', 'Kontribusi Pendapatan (%)']);
-            $sql_export = "SELECT m.category, SUM(oi.quantity) as total_sold, SUM(oi.total_price) as total_revenue FROM order_items oi JOIN menu m ON oi.menu_id = m.id JOIN orders o ON oi.order_id = o.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY m.category ORDER BY total_revenue DESC";
+            // Header Tabel
+            fputcsv($output, ['LAPORAN PENJUALAN PER KATEGORI']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['NO', 'KATEGORI MENU', 'JUMLAH MENU', 'QTY TERJUAL', 'RATA-RATA HARGA', 'TOTAL PENDAPATAN', 'KONTRIBUSI (%)', 'STATUS']);
+            fputcsv($output, ['=================================================================================']);
+
+            $sql_export = "SELECT m.category, 
+                          COUNT(DISTINCT m.id) as menu_count,
+                          SUM(oi.quantity) as total_sold, 
+                          SUM(oi.total_price) as total_revenue,
+                          AVG(oi.price_per_item) as avg_price
+                          FROM order_items oi 
+                          JOIN menu m ON oi.menu_id = m.id 
+                          JOIN orders o ON oi.order_id = o.id 
+                          WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') 
+                          GROUP BY m.category 
+                          ORDER BY total_revenue DESC";
+
             if ($stmt = $conn->prepare($sql_export)) {
                 $stmt->bind_param("ss", $start_date, $end_date);
                 $stmt->execute();
@@ -125,80 +260,274 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
 
                 $grand_total_revenue = array_sum(array_column($data_rows, 'total_revenue'));
                 $grand_total_sold = array_sum(array_column($data_rows, 'total_sold'));
+                $grand_total_menu = array_sum(array_column($data_rows, 'menu_count'));
+                $no = 1;
 
                 foreach ($data_rows as $row) {
                     $contribution = ($grand_total_revenue > 0) ? ($row['total_revenue'] / $grand_total_revenue) * 100 : 0;
-                    fputcsv($output, [$row['category'], $row['total_sold'], $row['total_revenue'], number_format($contribution, 2)]);
+                    $status = '';
+                    if ($contribution >= 30) $status = 'KATEGORI UNGGULAN';
+                    elseif ($contribution >= 15) $status = 'KATEGORI POPULER';
+                    elseif ($contribution >= 5) $status = 'KATEGORI STANDAR';
+                    else $status = 'KATEGORI RENDAH';
+
+                    fputcsv($output, [
+                        $no++,
+                        $row['category'],
+                        number_format($row['menu_count']) . ' menu',
+                        number_format($row['total_sold']) . ' pcs',
+                        'Rp ' . number_format($row['avg_price'], 0, ',', '.'),
+                        'Rp ' . number_format($row['total_revenue'], 0, ',', '.'),
+                        number_format($contribution, 2) . '%',
+                        $status
+                    ]);
                 }
-                fputcsv($output, []);
-                fputcsv($output, ['GRAND TOTAL', $grand_total_sold, $grand_total_revenue, '100.00']);
+
+                // Footer Summary
+                fputcsv($output, ['=================================================================================']);
+                fputcsv($output, ['', 'TOTAL KESELURUHAN', number_format($grand_total_menu) . ' menu', number_format($grand_total_sold) . ' pcs', '', 'Rp ' . number_format($grand_total_revenue, 0, ',', '.'), '100.00%', '']);
+                fputcsv($output, ['', 'RATA-RATA PER KATEGORI', number_format($grand_total_menu / max(count($data_rows), 1), 2) . ' menu', number_format($grand_total_sold / max(count($data_rows), 1), 2) . ' pcs', '', 'Rp ' . number_format($grand_total_revenue / max(count($data_rows), 1), 0, ',', '.'), '', '']);
+                fputcsv($output, ['=================================================================================']);
             }
             break;
 
         case 'member':
-            fputcsv($output, ['Nama Member', 'Total Transaksi', 'Total Belanja (Rp)', 'Rata-rata Belanja per Transaksi (Rp)']);
-            $sql_export = "SELECT m.name as member_name, COUNT(o.id) as total_transactions, SUM(o.total_amount) as total_spent FROM orders o JOIN members m ON o.member_id = m.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY o.member_id ORDER BY total_spent DESC";
+            // Header Tabel
+            fputcsv($output, ['LAPORAN AKTIVITAS MEMBER']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['NO', 'NAMA MEMBER', 'TOTAL TRANSAKSI', 'TOTAL ITEM', 'TOTAL BELANJA', 'RATA-RATA/TRX', 'FREKUENSI', 'STATUS MEMBER']);
+            fputcsv($output, ['=================================================================================']);
+
+            $sql_export = "SELECT m.name as member_name, m.email, 
+                          COUNT(o.id) as total_transactions, 
+                          SUM(o.total_amount) as total_spent,
+                          SUM(oi.quantity) as total_items,
+                          MIN(o.created_at) as first_order,
+                          MAX(o.created_at) as last_order
+                          FROM orders o 
+                          JOIN members m ON o.member_id = m.id 
+                          LEFT JOIN order_items oi ON o.id = oi.order_id
+                          WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') 
+                          GROUP BY o.member_id 
+                          ORDER BY total_spent DESC";
+
             $grand_total_transactions = 0;
             $grand_total_spent = 0;
+            $grand_total_items = 0;
+            $active_members = 0;
+            $no = 1;
+
             if ($stmt = $conn->prepare($sql_export)) {
                 $stmt->bind_param("ss", $start_date, $end_date);
                 $stmt->execute();
                 $result = $stmt->get_result();
+
                 while ($row = $result->fetch_assoc()) {
                     $avg_spent = ($row['total_transactions'] > 0) ? $row['total_spent'] / $row['total_transactions'] : 0;
-                    fputcsv($output, [$row['member_name'], $row['total_transactions'], $row['total_spent'], $avg_spent]);
+
+                    // Hitung frekuensi berdasarkan periode
+                    $days_diff = max(1, (strtotime($end_date) - strtotime($start_date)) / (60 * 60 * 24));
+                    $frequency = round($row['total_transactions'] / $days_diff * 30, 1); // per bulan
+
+                    // Status member
+                    $status = '';
+                    if ($row['total_spent'] >= 1000000) $status = 'VIP MEMBER';
+                    elseif ($row['total_spent'] >= 500000) $status = 'GOLD MEMBER';
+                    elseif ($row['total_spent'] >= 200000) $status = 'SILVER MEMBER';
+                    elseif ($row['total_transactions'] >= 5) $status = 'ACTIVE MEMBER';
+                    else $status = 'NEW MEMBER';
+
+                    fputcsv($output, [
+                        $no++,
+                        $row['member_name'],
+                        number_format($row['total_transactions']) . ' kali',
+                        number_format($row['total_items']) . ' item',
+                        'Rp ' . number_format($row['total_spent'], 0, ',', '.'),
+                        'Rp ' . number_format($avg_spent, 0, ',', '.'),
+                        $frequency . ' per bulan',
+                        $status
+                    ]);
+
                     $grand_total_transactions += $row['total_transactions'];
                     $grand_total_spent += $row['total_spent'];
+                    $grand_total_items += $row['total_items'];
+                    $active_members++;
                 }
                 $stmt->close();
             }
-            fputcsv($output, []);
+
+            // Footer Summary
             $grand_avg = ($grand_total_transactions > 0) ? $grand_total_spent / $grand_total_transactions : 0;
-            fputcsv($output, ['GRAND TOTAL', $grand_total_transactions, $grand_total_spent, $grand_avg]);
+            $avg_items_per_member = ($active_members > 0) ? $grand_total_items / $active_members : 0;
+
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['', 'TOTAL KESELURUHAN', number_format($grand_total_transactions) . ' kali', number_format($grand_total_items) . ' item', 'Rp ' . number_format($grand_total_spent, 0, ',', '.'), 'Rp ' . number_format($grand_avg, 0, ',', '.'), '', '']);
+            fputcsv($output, ['', 'JUMLAH MEMBER AKTIF', number_format($active_members) . ' member', '', '', '', '', '']);
+            fputcsv($output, ['', 'RATA-RATA PER MEMBER', number_format($grand_total_transactions / max($active_members, 1), 2) . ' trx', number_format($avg_items_per_member, 2) . ' item', 'Rp ' . number_format($grand_total_spent / max($active_members, 1), 0, ',', '.'), '', '', '']);
+            fputcsv($output, ['=================================================================================']);
             break;
 
         case 'kasir':
-            fputcsv($output, ['Nama Kasir', 'Total Transaksi Dilayani', 'Total Pendapatan (Rp)', 'Rata-rata Pendapatan per Transaksi (Rp)']);
-            $sql_export = "SELECT u.name as cashier_name, COUNT(o.id) as total_transactions, SUM(o.total_amount) as total_revenue FROM orders o JOIN users u ON o.cashier_id = u.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') GROUP BY o.cashier_id ORDER BY total_revenue DESC";
+            // Header Tabel
+            fputcsv($output, ['LAPORAN PERFORMA KASIR']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['NO', 'NAMA KASIR', 'SHIFT KERJA', 'TOTAL TRX', 'TOTAL ITEM', 'TOTAL PENDAPATAN', 'RATA-RATA/TRX', 'PERFORMA', 'TARGET HARIAN']);
+            fputcsv($output, ['=================================================================================']);
+
+            $sql_export = "SELECT u.name as cashier_name, 
+                          COUNT(o.id) as total_transactions, 
+                          SUM(o.total_amount) as total_revenue,
+                          SUM(oi.quantity) as total_items,
+                          COUNT(DISTINCT DATE(o.created_at)) as working_days,
+                          MIN(TIME(o.created_at)) as earliest_time,
+                          MAX(TIME(o.created_at)) as latest_time
+                          FROM orders o 
+                          JOIN users u ON o.cashier_id = u.id 
+                          LEFT JOIN order_items oi ON o.id = oi.order_id
+                          WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') 
+                          GROUP BY o.cashier_id 
+                          ORDER BY total_revenue DESC";
+
             $grand_total_transactions = 0;
             $grand_total_revenue = 0;
+            $grand_total_items = 0;
+            $active_cashiers = 0;
+            $no = 1;
+
             if ($stmt = $conn->prepare($sql_export)) {
                 $stmt->bind_param("ss", $start_date, $end_date);
                 $stmt->execute();
                 $result = $stmt->get_result();
+
                 while ($row = $result->fetch_assoc()) {
                     $avg_revenue = ($row['total_transactions'] > 0) ? $row['total_revenue'] / $row['total_transactions'] : 0;
-                    fputcsv($output, [$row['cashier_name'], $row['total_transactions'], $row['total_revenue'], $avg_revenue]);
+                    $daily_avg = ($row['working_days'] > 0) ? $row['total_revenue'] / $row['working_days'] : 0;
+
+                    // Shift kerja
+                    $shift = '';
+                    $earliest = strtotime($row['earliest_time']);
+                    $latest = strtotime($row['latest_time']);
+                    if (date('H', $earliest) < 12 && date('H', $latest) < 17) $shift = 'PAGI (07-15)';
+                    elseif (date('H', $earliest) >= 12 && date('H', $latest) >= 17) $shift = 'SORE (15-23)';
+                    else $shift = 'FULL (07-23)';
+
+                    // Performa kasir
+                    $performance = '';
+                    if ($daily_avg >= 2000000) $performance = 'EXCELLENT';
+                    elseif ($daily_avg >= 1500000) $performance = 'VERY GOOD';
+                    elseif ($daily_avg >= 1000000) $performance = 'GOOD';
+                    elseif ($daily_avg >= 500000) $performance = 'AVERAGE';
+                    else $performance = 'NEEDS IMPROVEMENT';
+
+                    // Target harian (asumsi target 1.5 juta per hari)
+                    $target_status = ($daily_avg >= 1500000) ? 'TERCAPAI ✓' : 'BELUM TERCAPAI';
+
+                    fputcsv($output, [
+                        $no++,
+                        $row['cashier_name'],
+                        $shift,
+                        number_format($row['total_transactions']) . ' trx',
+                        number_format($row['total_items']) . ' item',
+                        'Rp ' . number_format($row['total_revenue'], 0, ',', '.'),
+                        'Rp ' . number_format($avg_revenue, 0, ',', '.'),
+                        $performance,
+                        $target_status
+                    ]);
+
                     $grand_total_transactions += $row['total_transactions'];
                     $grand_total_revenue += $row['total_revenue'];
+                    $grand_total_items += $row['total_items'];
+                    $active_cashiers++;
                 }
                 $stmt->close();
             }
-            fputcsv($output, []);
+
+            // Footer Summary
             $grand_avg = ($grand_total_transactions > 0) ? $grand_total_revenue / $grand_total_transactions : 0;
-            fputcsv($output, ['GRAND TOTAL', $grand_total_transactions, $grand_total_revenue, $grand_avg]);
+            $avg_per_cashier = ($active_cashiers > 0) ? $grand_total_revenue / $active_cashiers : 0;
+
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['', 'TOTAL KESELURUHAN', '', number_format($grand_total_transactions) . ' trx', number_format($grand_total_items) . ' item', 'Rp ' . number_format($grand_total_revenue, 0, ',', '.'), 'Rp ' . number_format($grand_avg, 0, ',', '.'), '', '']);
+            fputcsv($output, ['', 'JUMLAH KASIR AKTIF', number_format($active_cashiers) . ' kasir', '', '', '', '', '', '']);
+            fputcsv($output, ['', 'RATA-RATA PER KASIR', '', number_format($grand_total_transactions / max($active_cashiers, 1), 2) . ' trx', number_format($grand_total_items / max($active_cashiers, 1), 2) . ' item', 'Rp ' . number_format($avg_per_cashier, 0, ',', '.'), '', '', '']);
+            fputcsv($output, ['=================================================================================']);
             break;
 
         default: // 'ringkasan'
-            // Rekap pendapatan total dan addon
-            $total_pendapatan = 0;
+            // BAGIAN 1: RINGKASAN UTAMA DENGAN PERHITUNGAN LENGKAP
+            $summary_data = ['total_rev' => 0, 'total_tx' => 0, 'total_disc' => 0, 'total_tax' => 0, 'total_items' => 0];
+            $sql_summary = "SELECT SUM(o.total_amount) as total_rev, 
+                           COUNT(o.id) as total_tx, 
+                           SUM(o.discount_amount) as total_disc, 
+                           SUM(o.tax) as total_tax,
+                           SUM(oi.quantity) as total_items,
+                           COUNT(DISTINCT o.member_id) as unique_members,
+                           COUNT(DISTINCT o.cashier_id) as active_cashiers
+                           FROM orders o 
+                           LEFT JOIN order_items oi ON o.id = oi.order_id
+                           WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid')";
+            if ($stmt_sum = $conn->prepare($sql_summary)) {
+                $stmt_sum->bind_param("ss", $start_date, $end_date);
+                $stmt_sum->execute();
+                $res_sum = $stmt_sum->get_result();
+                if ($row = $res_sum->fetch_assoc()) {
+                    $summary_data = $row;
+                }
+                $stmt_sum->close();
+            }
+
+            // Hitung pendapatan bersih
+            $net_revenue = ($summary_data['total_rev'] ?? 0) - ($summary_data['total_disc'] ?? 0);
+            $avg_trx = (($summary_data['total_tx'] ?? 0) > 0) ? (($summary_data['total_rev'] ?? 0) / $summary_data['total_tx']) : 0;
+            $avg_items_per_trx = (($summary_data['total_tx'] ?? 0) > 0) ? (($summary_data['total_items'] ?? 0) / $summary_data['total_tx']) : 0;
+
+            // Hitung periode dalam hari
+            $start_timestamp = strtotime($start_date);
+            $end_timestamp = strtotime($end_date);
+            $days_period = max(1, ($end_timestamp - $start_timestamp) / (60 * 60 * 24) + 1);
+            $daily_avg_revenue = ($summary_data['total_rev'] ?? 0) / $days_period;
+            $daily_avg_transactions = ($summary_data['total_tx'] ?? 0) / $days_period;
+
+            fputcsv($output, ['RINGKASAN PENJUALAN KESELURUHAN']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['METRIK PENJUALAN', 'NILAI', 'KETERANGAN']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['Total Pendapatan Kotor', 'Rp ' . number_format($summary_data['total_rev'] ?? 0, 0, ',', '.'), 'Sebelum diskon']);
+            fputcsv($output, ['Total Diskon Diberikan', 'Rp ' . number_format($summary_data['total_disc'] ?? 0, 0, ',', '.'), 'Potongan harga']);
+            fputcsv($output, ['Pendapatan Bersih', 'Rp ' . number_format($net_revenue, 0, ',', '.'), 'Setelah diskon']);
+            fputcsv($output, ['Total Pajak (PPN 11%)', 'Rp ' . number_format($summary_data['total_tax'] ?? 0, 0, ',', '.'), 'Pajak terkumpul']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['STATISTIK TRANSAKSI', '', '']);
+            fputcsv($output, ['Total Transaksi', number_format($summary_data['total_tx'] ?? 0) . ' transaksi', 'Periode ' . $days_period . ' hari']);
+            fputcsv($output, ['Total Item Terjual', number_format($summary_data['total_items'] ?? 0) . ' item', 'Semua produk']);
+            fputcsv($output, ['Rata-rata per Transaksi', 'Rp ' . number_format($avg_trx, 0, ',', '.'), 'Per transaksi']);
+            fputcsv($output, ['Rata-rata Item per Transaksi', number_format($avg_items_per_trx, 2) . ' item', 'Per transaksi']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, ['ANALISIS HARIAN', '', '']);
+            fputcsv($output, ['Rata-rata Pendapatan Harian', 'Rp ' . number_format($daily_avg_revenue, 0, ',', '.'), 'Per hari']);
+            fputcsv($output, ['Rata-rata Transaksi Harian', number_format($daily_avg_transactions, 2) . ' transaksi', 'Per hari']);
+            fputcsv($output, ['Member Aktif', number_format($summary_data['unique_members'] ?? 0) . ' member', 'Yang bertransaksi']);
+            fputcsv($output, ['Kasir Aktif', number_format($summary_data['active_cashiers'] ?? 0) . ' kasir', 'Yang bertugas']);
+            fputcsv($output, ['=================================================================================']);
+            fputcsv($output, []);
+
+            // BAGIAN 2: REKAP ADDON
             $total_pendapatan_addon = 0;
             $addon_summary = [];
 
-            $sql_orders = "SELECT o.id as order_id, o.created_at FROM orders o WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') ORDER BY o.created_at ASC";
+            $sql_orders = "SELECT o.id as order_id FROM orders o WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid')";
             if ($stmt_orders = $conn->prepare($sql_orders)) {
                 $stmt_orders->bind_param("ss", $start_date, $end_date);
                 $stmt_orders->execute();
                 $result_orders = $stmt_orders->get_result();
                 while ($order = $result_orders->fetch_assoc()) {
                     $order_id = $order['order_id'];
-                    $sql_items = "SELECT oi.*, m.name as menu_name, m.category FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
+                    $sql_items = "SELECT oi.quantity, oi.selected_addons FROM order_items oi WHERE oi.order_id = ?";
                     if ($stmt_items = $conn->prepare($sql_items)) {
                         $stmt_items->bind_param("i", $order_id);
                         $stmt_items->execute();
                         $result_items = $stmt_items->get_result();
                         while ($item = $result_items->fetch_assoc()) {
-                            $total_pendapatan += isset($item['subtotal']) ? $item['subtotal'] : (isset($item['total_price']) ? $item['total_price'] : 0);
                             if (!empty($item['selected_addons'])) {
                                 $addons = json_decode($item['selected_addons'], true);
                                 if (is_array($addons)) {
@@ -207,7 +536,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
                                         $addon_price = isset($addon['price']) ? $addon['price'] : 0;
                                         $addon_subtotal = $addon_qty * $addon_price;
                                         $total_pendapatan_addon += $addon_subtotal;
-                                        $addon_name = $addon['option_name'] ?? '';
+                                        $addon_name = $addon['option_name'] ?? 'Addon Tidak Dikenal';
                                         if (!isset($addon_summary[$addon_name])) {
                                             $addon_summary[$addon_name] = ['qty' => 0, 'pendapatan' => 0];
                                         }
@@ -223,71 +552,69 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
                 $stmt_orders->close();
             }
 
-            fputcsv($output, ['REKAP PENDAPATAN']);
-            fputcsv($output, ['Total Pendapatan Semua (Rp)', $total_pendapatan]);
-            fputcsv($output, ['Total Pendapatan Addon (Rp)', $total_pendapatan_addon]);
-            fputcsv($output, []);
-            fputcsv($output, ['Detail Pendapatan Addon']);
-            fputcsv($output, ['Nama Addon', 'Total Qty', 'Total Pendapatan (Rp)']);
-            foreach ($addon_summary as $addon_name => $row) {
-                fputcsv($output, [$addon_name, $row['qty'], $row['pendapatan']]);
-            }
-            fputcsv($output, []);
-
-            // Ringkasan tetap
-            $summary_data = ['total_rev' => 0, 'total_tx' => 0, 'total_disc' => 0, 'total_tax' => 0];
-            $sql_summary = "SELECT SUM(total_amount) as total_rev, COUNT(id) as total_tx, SUM(discount_amount) as total_disc, SUM(tax) as total_tax FROM orders WHERE DATE(created_at) BETWEEN ? AND ? AND status IN ('completed', 'paid')";
-            if ($stmt_sum = $conn->prepare($sql_summary)) {
-                $stmt_sum->bind_param("ss", $start_date, $end_date);
-                $stmt_sum->execute();
-                $res_sum = $stmt_sum->get_result();
-                if ($row = $res_sum->fetch_assoc()) {
-                    $summary_data = $row;
+            if (!empty($addon_summary)) {
+                fputcsv($output, ['DETAIL PENDAPATAN ADDON']);
+                fputcsv($output, ['-----------------------------------------------------------------']);
+                fputcsv($output, ['NO', 'NAMA ADDON', 'QTY TERJUAL', 'TOTAL PENDAPATAN']);
+                fputcsv($output, ['-----------------------------------------------------------------']);
+                $no = 1;
+                foreach ($addon_summary as $addon_name => $row) {
+                    fputcsv($output, [
+                        $no++,
+                        $addon_name,
+                        number_format($row['qty']),
+                        'Rp ' . number_format($row['pendapatan'], 0, ',', '.')
+                    ]);
                 }
-                $stmt_sum->close();
+                fputcsv($output, ['-----------------------------------------------------------------']);
+                fputcsv($output, ['', 'TOTAL ADDON', number_format(array_sum(array_column($addon_summary, 'qty'))), 'Rp ' . number_format($total_pendapatan_addon, 0, ',', '.')]);
+                fputcsv($output, ['=================================================================']);
+                fputcsv($output, []);
             }
-            fputcsv($output, ['Ringkasan Laporan']);
-            fputcsv($output, ['Total Pendapatan Kotor (Rp)', $summary_data['total_rev'] ?? 0]);
-            fputcsv($output, ['Total Diskon Diberikan (Rp)', $summary_data['total_disc'] ?? 0]);
-            fputcsv($output, ['Total Pajak Terkumpul (Rp)', $summary_data['total_tax'] ?? 0]);
-            fputcsv($output, ['Total Transaksi', $summary_data['total_tx'] ?? 0]);
-            $avg_trx = (($summary_data['total_tx'] ?? 0) > 0) ? (($summary_data['total_rev'] ?? 0) / $summary_data['total_tx']) : 0;
-            fputcsv($output, ['Rata-rata per Transaksi (Rp)', $avg_trx]);
-            fputcsv($output, []);
 
-            // Export detail penjualan per item dan addon
-            fputcsv($output, ['Detail Penjualan (Setiap Item & Addon)']);
-            fputcsv($output, ['Tanggal', 'ID Pesanan', 'Nama Menu', 'Kategori', 'Qty', 'Harga Satuan', 'Subtotal', 'Addon', 'Harga Addon', 'Qty Addon', 'Subtotal Addon', 'Pelanggan', 'Kasir', 'Metode Bayar']);
-            $sql_orders = "SELECT o.id as order_id, o.created_at, COALESCE(mem.name, o.customer_name, 'Guest') as customer_name, COALESCE(uc.name, 'N/A') as cashier_name, o.payment_method FROM orders o LEFT JOIN members mem ON o.member_id = mem.id LEFT JOIN users uc ON o.cashier_id = uc.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') ORDER BY o.created_at ASC";
+            // BAGIAN 3: DETAIL TRANSAKSI LENGKAP
+            fputcsv($output, ['DETAIL TRANSAKSI LENGKAP']);
+            fputcsv($output, ['=======================================================================================================================================================']);
+            fputcsv($output, ['TANGGAL', 'ID ORDER', 'NAMA MENU', 'KATEGORI', 'QTY', 'HARGA SATUAN', 'SUBTOTAL', 'ADDON', 'HARGA ADDON', 'QTY ADDON', 'SUBTOTAL ADDON', 'PELANGGAN', 'KASIR', 'METODE BAYAR']);
+            fputcsv($output, ['-------------------------------------------------------------------------------------------------------------------------------------------------------']);
+
+            $sql_orders = "SELECT o.id as order_id, DATE_FORMAT(o.created_at, '%d-%m-%Y %H:%i') as formatted_date, COALESCE(mem.name, o.customer_name, 'Guest') as customer_name, COALESCE(uc.name, 'N/A') as cashier_name, o.payment_method FROM orders o LEFT JOIN members mem ON o.member_id = mem.id LEFT JOIN users uc ON o.cashier_id = uc.id WHERE DATE(o.created_at) BETWEEN ? AND ? AND o.status IN ('completed', 'paid') ORDER BY o.created_at ASC";
+
             if ($stmt_orders = $conn->prepare($sql_orders)) {
                 $stmt_orders->bind_param("ss", $start_date, $end_date);
                 $stmt_orders->execute();
                 $result_orders = $stmt_orders->get_result();
+
                 while ($order = $result_orders->fetch_assoc()) {
                     $order_id = $order['order_id'];
                     $sql_items = "SELECT oi.*, m.name as menu_name, m.category FROM order_items oi JOIN menu m ON oi.menu_id = m.id WHERE oi.order_id = ?";
+
                     if ($stmt_items = $conn->prepare($sql_items)) {
                         $stmt_items->bind_param("i", $order_id);
                         $stmt_items->execute();
                         $result_items = $stmt_items->get_result();
+
                         while ($item = $result_items->fetch_assoc()) {
+                            $subtotal = isset($item['subtotal']) ? $item['subtotal'] : (isset($item['total_price']) ? $item['total_price'] : 0);
+
                             // Baris utama menu
                             fputcsv($output, [
-                                $order['created_at'],
-                                $order_id,
+                                $order['formatted_date'],
+                                '#' . $order_id,
                                 $item['menu_name'],
                                 $item['category'],
-                                $item['quantity'],
-                                $item['price_per_item'],
-                                isset($item['subtotal']) ? $item['subtotal'] : (isset($item['total_price']) ? $item['total_price'] : ''),
+                                number_format($item['quantity']),
+                                'Rp ' . number_format($item['price_per_item'], 0, ',', '.'),
+                                'Rp ' . number_format($subtotal, 0, ',', '.'),
                                 '',
                                 '',
                                 '',
                                 '',
                                 $order['customer_name'],
                                 $order['cashier_name'],
-                                $order['payment_method']
+                                ucfirst(str_replace('_', ' ', $order['payment_method']))
                             ]);
+
                             // Baris addon jika ada
                             if (!empty($item['selected_addons'])) {
                                 $addons = json_decode($item['selected_addons'], true);
@@ -296,21 +623,22 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
                                         $addon_qty = $item['quantity'];
                                         $addon_price = isset($addon['price']) ? $addon['price'] : 0;
                                         $addon_subtotal = $addon_qty * $addon_price;
+
                                         fputcsv($output, [
-                                            $order['created_at'],
-                                            $order_id,
-                                            $item['menu_name'],
-                                            $item['category'],
+                                            '',
+                                            '',
+                                            '└─ ' . $item['menu_name'],
                                             '',
                                             '',
                                             '',
-                                            $addon['option_name'] ?? '',
-                                            $addon_price,
-                                            $addon_qty,
-                                            $addon_subtotal,
-                                            $order['customer_name'],
-                                            $order['cashier_name'],
-                                            $order['payment_method']
+                                            '',
+                                            '+ ' . ($addon['option_name'] ?? 'Addon'),
+                                            'Rp ' . number_format($addon_price, 0, ',', '.'),
+                                            number_format($addon_qty),
+                                            'Rp ' . number_format($addon_subtotal, 0, ',', '.'),
+                                            '',
+                                            '',
+                                            ''
                                         ]);
                                     }
                                 }
@@ -321,8 +649,50 @@ if (isset($_GET['action']) && $_GET['action'] == 'cetak_excel') {
                 }
                 $stmt_orders->close();
             }
+
+            // Footer untuk laporan ringkasan
+            fputcsv($output, ['=======================================================================================================================================================']);
+            fputcsv($output, []);
+            fputcsv($output, ['--- AKHIR LAPORAN ---']);
+            fputcsv($output, ['Dicetak pada: ' . date('d F Y, H:i:s') . ' WIB']);
+            fputcsv($output, ['Sistem Laporan ' . ($cafe_name)]);
             break;
     }
+
+    // FOOTER UNIVERSAL UNTUK SEMUA LAPORAN DENGAN RINGKASAN GLOBAL
+    fputcsv($output, []);
+    fputcsv($output, ['=================================================================================']);
+    fputcsv($output, ['RINGKASAN GLOBAL PERIODE LAPORAN']);
+    fputcsv($output, ['=================================================================================']);
+    fputcsv($output, ['Total Transaksi Keseluruhan', number_format($global_summary['total_transactions'] ?? 0) . ' transaksi']);
+    fputcsv($output, ['Total Pendapatan Keseluruhan', 'Rp ' . number_format($global_summary['total_revenue'] ?? 0, 0, ',', '.')]);
+    fputcsv($output, ['Total Item Terjual Keseluruhan', number_format($global_summary['total_items'] ?? 0) . ' item']);
+
+    // Hitung persentase periode
+    $period_days = max(1, (strtotime($end_date) - strtotime($start_date)) / (60 * 60 * 24) + 1);
+    $monthly_projection = ($global_summary['total_revenue'] ?? 0) * (30 / $period_days);
+    $yearly_projection = ($global_summary['total_revenue'] ?? 0) * (365 / $period_days);
+
+    fputcsv($output, ['Proyeksi Pendapatan Bulanan', 'Rp ' . number_format($monthly_projection, 0, ',', '.')]);
+    fputcsv($output, ['Proyeksi Pendapatan Tahunan', 'Rp ' . number_format($yearly_projection, 0, ',', '.')]);
+    fputcsv($output, ['=================================================================================']);
+    fputcsv($output, []);
+    fputcsv($output, ['INFORMASI LAPORAN']);
+    fputcsv($output, ['=================================================================================']);
+    fputcsv($output, ['Nama Bisnis', $cafe_name]);
+    fputcsv($output, ['Jenis Laporan', strtoupper(str_replace('_', ' ', $view))]);
+    fputcsv($output, ['Periode Laporan', date('d F Y', strtotime($start_date)) . ' sampai ' . date('d F Y', strtotime($end_date))]);
+    fputcsv($output, ['Durasi Periode', number_format($period_days) . ' hari']);
+    fputcsv($output, ['Tanggal Export', date('d F Y, H:i:s') . ' WIB']);
+    fputcsv($output, ['Format File', 'CSV (Comma Separated Values)']);
+    fputcsv($output, ['Sistem', 'Sistem Laporan Penjualan ' . $cafe_name]);
+    fputcsv($output, ['=================================================================================']);
+    fputcsv($output, []);
+    fputcsv($output, ['📊 TERIMA KASIH TELAH MENGGUNAKAN SISTEM LAPORAN ' . strtoupper($cafe_name)]);
+    fputcsv($output, ['📋 File ini dibuat secara otomatis dengan data terkini dan akurat.']);
+    fputcsv($output, ['💼 Untuk informasi lebih lanjut, hubungi tim manajemen.']);
+    fputcsv($output, []);
+    fputcsv($output, ['=== AKHIR LAPORAN ===']);
 
     fclose($output);
     $conn->close();
