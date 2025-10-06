@@ -1,4 +1,7 @@
 <?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 // File: includes/header.php
 
 // Authentication check sudah dilakukan di middleware
