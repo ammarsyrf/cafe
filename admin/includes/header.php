@@ -30,6 +30,30 @@ try {
     // error_log("Error fetching settings: " . $e->getMessage());
 }
 
+// Ambil nama user dari session atau database
+$user_name = 'Admin'; // Default fallback
+
+try {
+    // Periksa apakah session user ada dan memiliki nama
+    if (isset($_SESSION['user']) && is_array($_SESSION['user'])) {
+        if (!empty($_SESSION['user']['name'])) {
+            // Gunakan nama dari session jika ada
+            $user_name = $_SESSION['user']['name'];
+        } elseif (!empty($_SESSION['user']['id'])) {
+            // Jika nama tidak ada di session, ambil dari database berdasarkan ID
+            $stmt = $pdo->prepare("SELECT name FROM users WHERE id = ?");
+            $stmt->execute([$_SESSION['user']['id']]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($user && !empty($user['name'])) {
+                $user_name = $user['name'];
+            }
+        }
+    }
+} catch (PDOException $e) {
+    // Log error untuk debugging
+    error_log("Error fetching user name: " . $e->getMessage());
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -119,8 +143,8 @@ try {
                 </div>
                 <div class="flex items-center">
                     <span class="text-gray-600 mr-4 hidden sm:block">
-                        Selamat Datang, <strong><?= htmlspecialchars($_SESSION['admin_name'] ?? 'Admin') ?></strong>!
-                        <span class="text-xs text-gray-500 ml-1">(<?= ucfirst($_SESSION['admin_role'] ?? 'admin') ?>)</span>
+                        Selamat Datang, <strong><?= htmlspecialchars($user_name) ?></strong>!
+                        <span class="text-xs text-gray-500 ml-1">(<?= ucfirst($_SESSION['admin_role'] ?? '') ?>)</span>
                     </span>
                     <img src="https://placehold.co/40x40/5958A1/FFFFFF?text=A" alt="Admin" class="rounded-full">
                 </div>
