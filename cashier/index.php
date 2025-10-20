@@ -324,7 +324,7 @@ if ($result_non_cash) while ($row = $result_non_cash->fetch_assoc()) $non_cash_o
 
 // 3. Pesanan sudah dibayar, TAPI struk belum dicetak
 $paid_orders = [];
-$sql_paid = "$base_select WHERE o.status = 'completed' AND o.receipt_printed_at IS NULL ORDER BY o.updated_at DESC";
+$sql_paid = "$base_select WHERE o.status = 'completed' AND o.receipt_printed_at IS NULL ORDER BY o.created_at DESC";
 $result_paid = $conn->query($sql_paid);
 if ($result_paid) while ($row = $result_paid->fetch_assoc()) $paid_orders[] = $row;
 
